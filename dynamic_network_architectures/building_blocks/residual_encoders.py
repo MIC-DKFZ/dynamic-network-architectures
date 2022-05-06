@@ -31,7 +31,11 @@ class ResidualEncoder(nn.Module):
                  return_skips: bool = False,
                  disable_default_stem: bool = False,
                  stem_channels: int = None,
-                 pool_type: str = 'conv'):
+                 pool_type: str = 'conv',
+                 stochastic_depth_p: float = 0.0,
+                 squeeze_excitation: bool = False,
+                 squeeze_excitation_reduction_ratio: float = 1. / 16
+                 ):
         """
 
         :param input_channels:
@@ -101,7 +105,9 @@ class ResidualEncoder(nn.Module):
             stage = StackedResidualBlocks(
                 n_blocks_per_stage[s], conv_op, input_channels, features_per_stage[s], kernel_sizes[s], stride_for_conv,
                 conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs,
-                block=block, bottleneck_channels=bottleneck_channels[s]
+                block=block, bottleneck_channels=bottleneck_channels[s], stochastic_depth_p=stochastic_depth_p,
+                squeeze_excitation=squeeze_excitation,
+                squeeze_excitation_reduction_ratio=squeeze_excitation_reduction_ratio
             )
 
             if pool_op is not None:

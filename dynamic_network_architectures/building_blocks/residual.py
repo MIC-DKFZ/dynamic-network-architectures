@@ -6,6 +6,7 @@ from torch.nn.modules.dropout import _DropoutNd
 
 from dynamic_network_architectures.building_blocks.helper import maybe_convert_scalar_to_list, get_matching_pool_op
 from dynamic_network_architectures.building_blocks.simple_conv_blocks import ConvDropoutNormReLU
+from dynamic_network_architectures.building_blocks.regularization import DropPath, SqueezeExcite
 import numpy as np
 
 
@@ -23,8 +24,9 @@ class BasicBlockD(nn.Module):
                  dropout_op_kwargs: dict = None,
                  nonlin: Union[None, Type[torch.nn.Module]] = None,
                  nonlin_kwargs: dict = None,
-                 # TODO drop_path
-                 # TODO se
+                 stochastic_depth_p: float = 0.0,
+                 squeeze_excitation: bool = False,
+                 squeeze_excitation_reduction_ratio: float = 1. / 16,
                  # todo wideresnet?
                  ):
         """
@@ -47,6 +49,9 @@ class BasicBlockD(nn.Module):
         :param dropout_op_kwargs:
         :param nonlin:
         :param nonlin_kwargs:
+        :param stochastic_depth_p:
+        :param squeeze_excitation:
+        :param squeeze_excitation_reduction_ratio:
         """
         super().__init__()
         self.input_channels = input_channels
@@ -68,6 +73,17 @@ class BasicBlockD(nn.Module):
 
         self.nonlin2 = nonlin(**nonlin_kwargs) if nonlin is not None else lambda x: x
 
+        # Stochastic Depth
+        self.apply_stochastic_depth = False if stochastic_depth_p == 0.0 else True
+        if self.apply_stochastic_depth:
+            self.drop_path = DropPath(drop_prob=stochastic_depth_p)
+
+        # Squeeze Excitation
+        self.apply_se = squeeze_excitation
+        if self.apply_se:
+            self.squeeze_excitation = SqueezeExcite(self.output_channels, conv_op,
+                                                    rd_ratio=squeeze_excitation_reduction_ratio, rd_divisor=8)
+
         has_stride = (isinstance(stride, int) and stride != 1) or any([i != 1 for i in stride])
         requires_projection = (input_channels != output_channels)
 
@@ -88,6 +104,10 @@ class BasicBlockD(nn.Module):
     def forward(self, x):
         residual = self.skip(x)
         out = self.conv2(self.conv1(x))
+        if self.apply_stochastic_depth:
+            out = self.drop_path(out)
+        if self.apply_se:
+            out = self.squeeze_excitation(out)
         out += residual
         return self.nonlin2(out)
 
@@ -125,8 +145,9 @@ class BottleneckD(nn.Module):
                  dropout_op_kwargs: dict = None,
                  nonlin: Union[None, Type[torch.nn.Module]] = None,
                  nonlin_kwargs: dict = None,
-                 # TODO drop_path
-                 # TODO se
+                 stochastic_depth_p: float = 0.0,
+                 squeeze_excitation: bool = False,
+                 squeeze_excitation_reduction_ratio: float = 1. / 16
                  ):
         """
         This implementation follows ResNet-D:
@@ -150,6 +171,9 @@ class BottleneckD(nn.Module):
         :param dropout_op_kwargs:
         :param nonlin:
         :param nonlin_kwargs:
+        :param stochastic_depth_p:
+        :param squeeze_excitation:
+        :param squeeze_excitation_reduction_ratio:
         """
         super().__init__()
         self.input_channels = input_channels
@@ -174,6 +198,17 @@ class BottleneckD(nn.Module):
 
         self.nonlin3 = nonlin(**nonlin_kwargs) if nonlin is not None else lambda x: x
 
+        # Stochastic Depth
+        self.apply_stochastic_depth = False if stochastic_depth_p == 0.0 else True
+        if self.apply_stochastic_depth:
+            self.drop_path = DropPath(drop_prob=stochastic_depth_p)
+
+        # Squeeze Excitation
+        self.apply_se = squeeze_excitation
+        if self.apply_se:
+            self.squeeze_excitation = SqueezeExcite(self.output_channels, conv_op,
+                                                    rd_ratio=squeeze_excitation_reduction_ratio, rd_divisor=8)
+
         has_stride = (isinstance(stride, int) and stride != 1) or any([i != 1 for i in stride])
         requires_projection = (input_channels != output_channels)
 
@@ -194,6 +229,10 @@ class BottleneckD(nn.Module):
     def forward(self, x):
         residual = self.skip(x)
         out = self.conv3(self.conv2(self.conv1(x)))
+        if self.apply_stochastic_depth:
+            out = self.drop_path(out)
+        if self.apply_se:
+            out = self.squeeze_excitation(out)
         out += residual
         return self.nonlin3(out)
 
@@ -234,7 +273,10 @@ class StackedResidualBlocks(nn.Module):
                  nonlin: Union[None, Type[torch.nn.Module]] = None,
                  nonlin_kwargs: dict = None,
                  block: Union[Type[BasicBlockD], Type[BottleneckD]] = BasicBlockD,
-                 bottleneck_channels: Union[int, List[int], Tuple[int, ...]] = None
+                 bottleneck_channels: Union[int, List[int], Tuple[int, ...]] = None,
+                 stochastic_depth_p: float = 0.0,
+                 squeeze_excitation: bool = False,
+                 squeeze_excitation_reduction_ratio: float = 1. / 16
                  ):
         """
         Stack multiple instances of block.
@@ -259,6 +301,10 @@ class StackedResidualBlocks(nn.Module):
         Bottleneck will use first 1x1 conv to reduce input to bottleneck features, then run the nxn (see kernel_size)
         conv on that (bottleneck -> bottleneck). Finally the output will be projected back to output_channels
         (bottleneck -> output_channels) with the final 1x1 conv
+        :param stochastic_depth_p: probability of applying stochastic depth in residual blocks
+        :param squeeze_excitation: whether to apply squeeze and excitation or not
+        :param squeeze_excitation_reduction_ratio: ratio by how much squeeze and excitation should reduce channels
+        respective to number of out channels of respective block
         """
         super().__init__()
         assert n_blocks > 0, 'n_blocks must be > 0'
@@ -271,18 +317,21 @@ class StackedResidualBlocks(nn.Module):
         if block == BasicBlockD:
             blocks = nn.Sequential(
                 block(conv_op, input_channels, output_channels[0], kernel_size, initial_stride, conv_bias,
-                      norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs),
-                *[block(conv_op, output_channels[n - 1], output_channels[n], kernel_size, 1, conv_bias, norm_op, norm_op_kwargs,
-                        dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs) for n in range(1, n_blocks)]
+                      norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, stochastic_depth_p,
+                      squeeze_excitation, squeeze_excitation_reduction_ratio),
+                *[block(conv_op, output_channels[n - 1], output_channels[n], kernel_size, 1, conv_bias, norm_op,
+                        norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, stochastic_depth_p,
+                        squeeze_excitation, squeeze_excitation_reduction_ratio) for n in range(1, n_blocks)]
             )
         else:
             blocks = nn.Sequential(
                 block(conv_op, input_channels, bottleneck_channels[0], output_channels[0], kernel_size,
                       initial_stride, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs,
-                      nonlin, nonlin_kwargs),
+                      nonlin, nonlin_kwargs, stochastic_depth_p, squeeze_excitation, squeeze_excitation_reduction_ratio),
                 *[block(conv_op, output_channels[n - 1], bottleneck_channels[n], output_channels[n], kernel_size,
                         1, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs,
-                        nonlin, nonlin_kwargs) for n in range(1, n_blocks)]
+                        nonlin, nonlin_kwargs, stochastic_depth_p, squeeze_excitation,
+                        squeeze_excitation_reduction_ratio) for n in range(1, n_blocks)]
             )
         self.blocks = blocks
         self.initial_stride = maybe_convert_scalar_to_list(conv_op, initial_stride)
