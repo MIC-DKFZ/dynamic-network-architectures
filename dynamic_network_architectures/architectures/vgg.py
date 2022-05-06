@@ -52,23 +52,23 @@ class VGG(nn.Module):
 
 
 class VGG16(VGG):
-    def __init__(self, n_classes: int, n_input_channel: int = 3):
-        super().__init__(n_classes, n_input_channel, '16', 2)
+    def __init__(self, n_classes: int, n_input_channel: int = 3, input_dimension: int = 2):
+        super().__init__(n_classes, n_input_channel, config='16', input_dimension=input_dimension)
 
 
 class VGG19(VGG):
-    def __init__(self, n_classes: int, n_input_channel: int = 3):
-        super().__init__(n_classes, n_input_channel, '19', 2)
+    def __init__(self, n_classes: int, n_input_channel: int = 3, input_dimension: int = 2):
+        super().__init__(n_classes, n_input_channel, config='19', input_dimension=input_dimension)
 
 
 class VGG16_cifar(VGG):
-    def __init__(self, n_classes: int, n_input_channel: int = 3):
-        super().__init__(n_classes, n_input_channel, '16_cifar', 2)
+    def __init__(self, n_classes: int, n_input_channel: int = 3, input_dimension: int = 2):
+        super().__init__(n_classes, n_input_channel, config='16_cifar', input_dimension=input_dimension)
 
 
 class VGG19_cifar(VGG):
-    def __init__(self, n_classes: int, n_input_channel: int = 3):
-        super().__init__(n_classes, n_input_channel, '19_cifar', 2)
+    def __init__(self, n_classes: int, n_input_channel: int = 3, input_dimension: int = 2):
+        super().__init__(n_classes, n_input_channel, config='19_cifar', input_dimension=input_dimension)
 
 
 if __name__ == '__main__':
