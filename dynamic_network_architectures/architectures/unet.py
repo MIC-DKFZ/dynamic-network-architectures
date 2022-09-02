@@ -37,10 +37,17 @@ class PlainConvUNet(nn.Module):
         nonlin_first: if True you get conv -> nonlin -> norm. Else it's conv -> norm -> nonlin
         """
         super().__init__()
+        if isinstance(n_conv_per_stage, int):
+            n_conv_per_stage = [n_conv_per_stage] * n_stages
         if isinstance(n_conv_per_stage_decoder, int):
             n_conv_per_stage_decoder = [n_conv_per_stage_decoder] * (n_stages - 1)
-        assert len(n_conv_per_stage_decoder) == (n_stages - 1), "n_conv_per_stage must have as many entries as we have " \
-                                                          "resolution stages. here: %d" % n_stages
+        assert len(n_conv_per_stage) == n_stages, "n_conv_per_stage must have as many entries as we have " \
+                                                  f"resolution stages. here: {n_stages}. " \
+                                                  f"n_conv_per_stage: {n_conv_per_stage}"
+        assert len(n_conv_per_stage_decoder) == (n_stages - 1), "n_conv_per_stage_decoder must have one less entries " \
+                                                                f"as we have resolution stages. here: {n_stages} " \
+                                                                f"stages, so it should have {n_stages - 1} entries. " \
+                                                                f"n_conv_per_stage_decoder: {n_conv_per_stage_decoder}"
         self.encoder = PlainConvEncoder(input_channels, n_stages, features_per_stage, conv_op, kernel_sizes, strides,
                                         n_conv_per_stage, conv_bias, norm_op, norm_op_kwargs, dropout_op,
                                         dropout_op_kwargs, nonlin, nonlin_kwargs, return_skips=True,
@@ -83,10 +90,17 @@ class ResidualEncoderUNet(nn.Module):
                  stem_channels: int = None
                  ):
         super().__init__()
+        if isinstance(n_blocks_per_stage, int):
+            n_blocks_per_stage = [n_blocks_per_stage] * n_stages
         if isinstance(n_conv_per_stage_decoder, int):
             n_conv_per_stage_decoder = [n_conv_per_stage_decoder] * (n_stages - 1)
-        assert len(n_conv_per_stage_decoder) == (n_stages - 1), "n_conv_per_stage must have as many entries as we have " \
-                                                                "resolution stages. here: %d" % n_stages
+        assert len(n_blocks_per_stage) == n_stages, "n_blocks_per_stage must have as many entries as we have " \
+                                                  f"resolution stages. here: {n_stages}. " \
+                                                  f"n_blocks_per_stage: {n_blocks_per_stage}"
+        assert len(n_conv_per_stage_decoder) == (n_stages - 1), "n_conv_per_stage_decoder must have one less entries " \
+                                                                f"as we have resolution stages. here: {n_stages} " \
+                                                                f"stages, so it should have {n_stages - 1} entries. " \
+                                                                f"n_conv_per_stage_decoder: {n_conv_per_stage_decoder}"
         self.encoder = ResidualEncoder(input_channels, n_stages, features_per_stage, conv_op, kernel_sizes, strides,
                                        n_blocks_per_stage, conv_bias, norm_op, norm_op_kwargs, dropout_op,
                                        dropout_op_kwargs, nonlin, nonlin_kwargs, block, bottleneck_channels,
