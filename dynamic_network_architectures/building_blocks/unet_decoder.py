@@ -60,9 +60,11 @@ class UNetDecoder(nn.Module):
                 encoder.kernel_sizes[-(s + 1)], 1, encoder.conv_bias, encoder.norm_op, encoder.norm_op_kwargs,
                 encoder.dropout_op, encoder.dropout_op_kwargs, encoder.nonlin, encoder.nonlin_kwargs, nonlin_first
             ))
-            if deep_supervision or (s == n_stages_encoder - 1):
-                # if we do upscale logits, do it here or dynamically during the forward pass
-                seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
+
+            # we always build the deep supervision outputs so that we can always load parameters. If we don't do this
+            # then a model trained with deep_supervision=True could not easily be loaded at inference time where
+            # deep supervision is not needed. It's just a convenience thing
+            seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
 
         self.stages = nn.ModuleList(stages)
         self.transpconvs = nn.ModuleList(transpconvs)
