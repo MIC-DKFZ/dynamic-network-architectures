@@ -29,3 +29,4 @@ def init_last_bn_before_add_to_0(module):
     if isinstance(module, BasicBlockD):
         module.conv2.norm.weight = nn.init.constant_(module.conv2.norm.weight, 0)
         module.conv2.norm.bias = nn.init.constant_(module.conv2.norm.bias, 0)
+
