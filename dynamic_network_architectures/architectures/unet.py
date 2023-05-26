@@ -139,8 +139,8 @@ class ConvNextEncoderUNet(nn.Module):
                  decoder_nonlin: Union[None, Type[torch.nn.Module]] = None,
                  decoder_nonlin_kwargs: dict = None,
                  drop_path_rate_encoder: float = 0,
-                 deep_supervision: bool = False
-                 ):
+                 deep_supervision: bool = False,
+                 encoder=ConvNextEncoder):
         super().__init__()
         if isinstance(n_blocks_per_stage, int):
             n_blocks_per_stage = [n_blocks_per_stage] * n_stages
@@ -153,7 +153,7 @@ class ConvNextEncoderUNet(nn.Module):
                                                                 f"as we have resolution stages. here: {n_stages} " \
                                                                 f"stages, so it should have {n_stages - 1} entries. " \
                                                                 f"n_conv_per_stage_decoder: {n_conv_per_stage_decoder}"
-        self.encoder = ConvNextEncoder(input_channels, n_stages, features_per_stage, conv_op, kernel_sizes, strides,
+        self.encoder = encoder(input_channels, n_stages, features_per_stage, conv_op, kernel_sizes, strides,
                                        n_blocks_per_stage, return_skips=True, stem='stacked_convs',
                                        drop_path_rate=drop_path_rate_encoder)
         self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,

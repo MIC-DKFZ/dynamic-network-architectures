@@ -10,7 +10,8 @@ from torch.nn.modules.dropout import _DropoutNd
 from dynamic_network_architectures.building_blocks.convnext_block import ConvNextBlock
 from dynamic_network_architectures.building_blocks.layer_norm import LayerNorm
 from dynamic_network_architectures.building_blocks.residual import StackedResidualBlocks, BottleneckD, BasicBlockD
-from dynamic_network_architectures.building_blocks.helper import maybe_convert_scalar_to_list, get_matching_pool_op
+from dynamic_network_architectures.building_blocks.helper import maybe_convert_scalar_to_list, get_matching_pool_op, \
+    get_matching_instancenorm
 from dynamic_network_architectures.building_blocks.simple_conv_blocks import StackedConvBlocks
 
 
@@ -67,9 +68,8 @@ class ConvNextEncoder(nn.Module):
             stem.__setattr__('compute_conv_feature_map_size', lambda input_size: features_per_stage[0] * np.prod([i / j] for i, j in zip(input_size, maybe_convert_scalar_to_list(conv_op, strides[0]))))
         elif stem == 'stacked_convs':
             stem = StackedConvBlocks(n_blocks_per_stage[0], conv_op, input_channels, features_per_stage[0], kernel_sizes[0], strides[0], True,
-                                     LayerNorm,
-                                     {'data_format': "channels_first"},
-                                     None, {}, nn.GELU, {})
+                                     get_matching_instancenorm(conv_op), {'eps': 1e-5, 'affine': True},
+                                     None, {}, nn.LeakyReLU, {'inplace': True})
         else:
             raise ValueError('unknown input for stem')
         self.stages.append(stem)
@@ -129,6 +129,50 @@ class ConvNextEncoder(nn.Module):
             for block in self.stages[s][1]:
                 output += block.compute_conv_feature_map_size(input_size)
         return output
+
+
+class ConvNextEncoder_standardconvblockstart(ConvNextEncoder):
+    def __init__(self,
+                 input_channels: int,
+                 n_stages: int,
+                 features_per_stage: Union[int, List[int], Tuple[int, ...]],
+                 conv_op: Type[_ConvNd],
+                 kernel_sizes: Union[int, List[int], Tuple[int, ...]],
+                 strides: Union[int, List[int], Tuple[int, ...], Tuple[Tuple[int, ...], ...]],
+                 n_blocks_per_stage: Union[int, List[int], Tuple[int, ...]],
+                 block: Type[ConvNextBlock] = ConvNextBlock,
+                 return_skips: bool = False,
+                 stem: str = 'default',
+                 drop_path_rate: float = 0.
+                 ):
+        """
+        Careful! This class behaves differently than the ResidualEncoder in that the first skip is returned by the stem
+        (if available). This is because we have an expansion of 4 in the convnext block which means we may not want to
+        use it at full feature map resolution (use stem instead)!
+        If stem is nn.Module, it MUST produce features_per_stage[0] output channels!
+
+        If stem is None, the default stem from the original implementation is used: https://github.com/facebookresearch/ConvNeXt/blob/main/models/convnext.py
+        (conv with kernel size 4 + stride 4 -> layernorm)
+        """
+        super().__init__(input_channels, n_stages, features_per_stage, conv_op, kernel_sizes, strides, n_blocks_per_stage, block, return_skips, stem, drop_path_rate)
+
+        # we need to exchange stages[0]
+
+        if stem == 'default':
+            # default stem ignores kernel_sizes[0]!
+            stem = nn.Sequential(
+                conv_op(input_channels, features_per_stage[0], kernel_size=kernel_sizes[0], stride=strides[0],
+                        padding=[(i - 1) // 2 for i in maybe_convert_scalar_to_list(conv_op, kernel_sizes[0])]),
+                LayerNorm(features_per_stage[0], eps=1e-6, data_format="channels_first")
+            )
+            stem.__setattr__('compute_conv_feature_map_size', lambda input_size: features_per_stage[0] * np.prod([i / j] for i, j in zip(input_size, maybe_convert_scalar_to_list(conv_op, strides[0]))))
+        elif stem == 'stacked_convs':
+            stem = StackedConvBlocks(n_blocks_per_stage[0], conv_op, input_channels, features_per_stage[0], kernel_sizes[0], strides[0], True,
+                                     get_matching_instancenorm(conv_op), {'eps': 1e-5, 'affine': True},
+                                     None, {}, nn.LeakyReLU, {'inplace': True})
+        else:
+            raise ValueError('unknown input for stem')
+        self.stages[0] = stem
 
 
 if __name__ == '__main__':
