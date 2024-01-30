@@ -67,7 +67,7 @@ class ConvDropoutNormReLU(nn.Module):
 
         self.all_modules = nn.Sequential(*ops)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.all_modules(x)
 
     def compute_conv_feature_map_size(self, input_size):
@@ -133,7 +133,7 @@ class StackedConvBlocks(nn.Module):
         self.output_channels = output_channels[-1]
         self.initial_stride = maybe_convert_scalar_to_list(conv_op, initial_stride)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.convs(x)
 
     def compute_conv_feature_map_size(self, input_size):
@@ -157,11 +157,12 @@ if __name__ == '__main__':
                                               3, 24, 3, 1, True, nn.BatchNorm2d, {}, None, None, nn.LeakyReLU,
                                               {'inplace': True}),
                           stx)
-    import hiddenlayer as hl
+    if False:
+        import hiddenlayer as hl
 
-    g = hl.build_graph(model, data,
-                       transforms=None)
-    g.save("network_architecture.pdf")
-    del g
+        g = hl.build_graph(model, data,
+                           transforms=None)
+        g.save("network_architecture.pdf")
+        del g
 
-    stx.compute_conv_feature_map_size((40, 32))
+    print(stx.compute_conv_feature_map_size((40, 32)))

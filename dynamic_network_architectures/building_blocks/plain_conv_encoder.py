@@ -25,11 +25,8 @@ class PlainConvEncoder(nn.Module):
                  dropout_op_kwargs: dict = None,
                  nonlin: Union[None, Type[torch.nn.Module]] = None,
                  nonlin_kwargs: dict = None,
-                 return_skips: bool = False,
                  nonlin_first: bool = False,
-                 pool: str = 'conv'
-                 ):
-
+                 pool: str = 'conv'):
         super().__init__()
         if isinstance(kernel_sizes, int):
             kernel_sizes = [kernel_sizes] * n_stages
@@ -67,7 +64,6 @@ class PlainConvEncoder(nn.Module):
         self.stages = nn.Sequential(*stages)
         self.output_channels = features_per_stage
         self.strides = [maybe_convert_scalar_to_list(conv_op, i) for i in strides]
-        self.return_skips = return_skips
 
         # we store some things that a potential decoder needs
         self.conv_op = conv_op
@@ -80,15 +76,12 @@ class PlainConvEncoder(nn.Module):
         self.conv_bias = conv_bias
         self.kernel_sizes = kernel_sizes
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
         ret = []
         for s in self.stages:
             x = s(x)
             ret.append(x)
-        if self.return_skips:
-            return ret
-        else:
-            return ret[-1]
+        return ret
 
     def compute_conv_feature_map_size(self, input_size):
         output = np.int64(0)
@@ -101,5 +94,4 @@ class PlainConvEncoder(nn.Module):
                 output += self.stages[s].compute_conv_feature_map_size(input_size)
             input_size = [i // j for i, j in zip(input_size, self.strides[s])]
         return output
-
 

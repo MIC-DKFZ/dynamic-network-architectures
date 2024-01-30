@@ -71,7 +71,7 @@ class BasicBlockD(nn.Module):
         self.conv2 = ConvDropoutNormReLU(conv_op, output_channels, output_channels, kernel_size, 1, conv_bias, norm_op,
                                          norm_op_kwargs, None, None, None, None)
 
-        self.nonlin2 = nonlin(**nonlin_kwargs) if nonlin is not None else lambda x: x
+        self.nonlin2 = nonlin(**nonlin_kwargs) if nonlin is not None else nn.Identity()
 
         # Stochastic Depth
         self.apply_stochastic_depth = False if stochastic_depth_p == 0.0 else True
@@ -99,9 +99,9 @@ class BasicBlockD(nn.Module):
                 )
             self.skip = nn.Sequential(*ops)
         else:
-            self.skip = lambda x: x
+            self.skip = nn.Identity()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = self.skip(x)
         out = self.conv2(self.conv1(x))
         if self.apply_stochastic_depth:
@@ -196,7 +196,7 @@ class BottleneckD(nn.Module):
         self.conv3 = ConvDropoutNormReLU(conv_op, bottleneck_channels, output_channels, 1, 1, conv_bias, norm_op,
                                          norm_op_kwargs, None, None, None, None)
 
-        self.nonlin3 = nonlin(**nonlin_kwargs) if nonlin is not None else lambda x: x
+        self.nonlin3 = nonlin(**nonlin_kwargs) if nonlin is not None else nn.Identity()
 
         # Stochastic Depth
         self.apply_stochastic_depth = False if stochastic_depth_p == 0.0 else True
@@ -224,9 +224,9 @@ class BottleneckD(nn.Module):
                 )
             self.skip = nn.Sequential(*ops)
         else:
-            self.skip = lambda x: x
+            self.skip = nn.Identity()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = self.skip(x)
         out = self.conv3(self.conv2(self.conv1(x)))
         if self.apply_stochastic_depth:
@@ -337,7 +337,7 @@ class StackedResidualBlocks(nn.Module):
         self.initial_stride = maybe_convert_scalar_to_list(conv_op, initial_stride)
         self.output_channels = output_channels[-1]
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.blocks(x)
 
     def compute_conv_feature_map_size(self, input_size):
@@ -361,11 +361,12 @@ if __name__ == '__main__':
                                               3, 24, 3, 1, True, nn.BatchNorm2d, {}, None, None, nn.LeakyReLU,
                                               {'inplace': True}),
                           stx)
-    import hiddenlayer as hl
+    if False:
+        import hiddenlayer as hl
 
-    g = hl.build_graph(model, data,
-                       transforms=None)
-    g.save("network_architecture.pdf")
-    del g
+        g = hl.build_graph(model, data,
+                           transforms=None)
+        g.save("network_architecture.pdf")
+        del g
 
     print(stx.compute_conv_feature_map_size((40, 32)))

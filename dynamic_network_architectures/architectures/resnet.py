@@ -85,7 +85,7 @@ class ResNetD(nn.Module):
                                        norm_op=self.ops['norm_op'], norm_op_kwargs=None, dropout_op=None,
                                        dropout_op_kwargs=None, nonlin=nn.ReLU,
                                        nonlin_kwargs={'inplace': True}, block=self.cfg['block'],
-                                       bottleneck_channels=self.cfg['bottleneck_channels'], return_skips=False,
+                                       bottleneck_channels=self.cfg['bottleneck_channels'],
                                        disable_default_stem=self.cfg['disable_default_stem'],
                                        stem_channels=self.cfg['stem_channels'],
                                        stochastic_depth_p=stochastic_depth_p,
@@ -99,7 +99,7 @@ class ResNetD(nn.Module):
     def forward(self, x):
         if self.stem is not None:
             x = self.stem(x)
-        x = self.encoder(x)
+        x = self.encoder(x)[-1]
         x = self.gap(x)
         x = self.final_layer_dropout(x).squeeze()
 
@@ -226,11 +226,10 @@ if __name__ == '__main__':
     data = torch.rand((1, 3, 224, 224))
 
     model = ResNet50bn(10, 3)
-    import hiddenlayer as hl
+    if False:
+        import hiddenlayer as hl
 
-    g = hl.build_graph(model, data,
-                       transforms=None)
-    g.save("network_architecture.pdf")
-    del g
-
-    #print(model.compute_conv_feature_map_size((32, 32)))
+        g = hl.build_graph(model, data,
+                           transforms=None)
+        g.save("network_architecture.pdf")
+        del g

@@ -37,13 +37,12 @@ class VGG(nn.Module):
             conv_op=ops['conv_op'],
             kernel_sizes=3, strides=cfg['strides'], n_conv_per_stage=cfg['n_conv_per_stage'], conv_bias=False,
             norm_op=ops['norm_op'], norm_op_kwargs=None, dropout_op=None, dropout_op_kwargs=None, nonlin=nn.ReLU,
-            nonlin_kwargs={'inplace': True}, return_skips=False
-        )
+            nonlin_kwargs={'inplace': True})
         self.gap = get_matching_pool_op(conv_op=ops['conv_op'], adaptive=True, pool_type='avg')(1)
         self.classifier = nn.Linear(cfg['features_per_stage'][-1], n_classes, True)
 
     def forward(self, x):
-        x = self.encoder(x)
+        x = self.encoder(x)[-1]
         x = self.gap(x).squeeze()
         return self.classifier(x)
 
@@ -75,11 +74,12 @@ if __name__ == '__main__':
     data = torch.rand((1, 3, 32, 32))
 
     model = VGG19_cifar(10, 3)
-    import hiddenlayer as hl
+    if False:
+        import hiddenlayer as hl
 
-    g = hl.build_graph(model, data,
-                       transforms=None)
-    g.save("network_architecture.pdf")
-    del g
+        g = hl.build_graph(model, data,
+                           transforms=None)
+        g.save("network_architecture.pdf")
+        del g
 
     print(model.compute_conv_feature_map_size((32, 32)))

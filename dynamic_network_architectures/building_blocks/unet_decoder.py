@@ -10,10 +10,8 @@ from dynamic_network_architectures.building_blocks.plain_conv_encoder import Pla
 
 class UNetDecoder(nn.Module):
     def __init__(self,
-                 encoder: Union[PlainConvEncoder, ResidualEncoder],
-                 num_classes: int,
-                 n_conv_per_stage: Union[int, Tuple[int, ...], List[int]],
-                 deep_supervision, nonlin_first: bool = False):
+                 encoder: Union[PlainConvEncoder, ResidualEncoder], num_classes: int,
+                 n_conv_per_stage: Union[int, Tuple[int, ...], List[int]], nonlin_first: bool = False):
         """
         This class needs the skips of the encoder as input in its forward.
 
@@ -30,7 +28,7 @@ class UNetDecoder(nn.Module):
         :param deep_supervision:
         """
         super().__init__()
-        self.deep_supervision = deep_supervision
+        self.deep_supervision = True
         self.encoder = encoder
         self.num_classes = num_classes
         n_stages_encoder = len(encoder.output_channels)
@@ -70,32 +68,22 @@ class UNetDecoder(nn.Module):
         self.transpconvs = nn.ModuleList(transpconvs)
         self.seg_layers = nn.ModuleList(seg_layers)
 
-    def forward(self, skips):
+    def forward(self, skips: List[torch.Tensor]) -> List[torch.Tensor]:
         """
         we expect to get the skips in the order they were computed, so the bottleneck should be the last entry
         :param skips:
         :return:
         """
-        lres_input = skips[-1]
+        x = skips[-1]
         seg_outputs = []
-        for s in range(len(self.stages)):
-            x = self.transpconvs[s](lres_input)
-            x = torch.cat((x, skips[-(s+2)]), 1)
-            x = self.stages[s](x)
-            if self.deep_supervision:
-                seg_outputs.append(self.seg_layers[s](x))
-            elif s == (len(self.stages) - 1):
-                seg_outputs.append(self.seg_layers[-1](x))
-            lres_input = x
+        for i, (stage, transpconv, seg_layer) in enumerate(zip(self.stages, self.transpconvs, self.seg_layers)):
+            x = transpconv(x)
+            x = torch.cat((x, skips[-(i + 2)]), 1)
+            x = stage(x)
+            seg_outputs.append(seg_layer(x))
 
-        # invert seg outputs so that the largest segmentation prediction is returned first
         seg_outputs = seg_outputs[::-1]
-
-        if not self.deep_supervision:
-            r = seg_outputs[0]
-        else:
-            r = seg_outputs
-        return r
+        return seg_outputs
 
     def compute_conv_feature_map_size(self, input_size):
         """
@@ -125,3 +113,25 @@ class UNetDecoder(nn.Module):
             if self.deep_supervision or (s == (len(self.stages) - 1)):
                 output += np.prod([self.num_classes, *skip_sizes[-(s+1)]], dtype=np.int64)
         return output
+
+
+class UNetDecoderNoDeepSupervision(UNetDecoder):
+    def __init__(self,
+                 encoder: Union[PlainConvEncoder, ResidualEncoder], num_classes: int,
+                 n_conv_per_stage: Union[int, Tuple[int, ...], List[int]], nonlin_first: bool = False):
+        super().__init__(encoder, num_classes, n_conv_per_stage, nonlin_first)
+        self.deep_supervision = False
+
+    def forward(self, skips: List[torch.Tensor]) -> torch.Tensor:
+        """
+        we expect to get the skips in the order they were computed, so the bottleneck should be the last entry
+        :param skips:
+        :return:
+        """
+        x = skips[-1]
+        for i, (stage, transpconv) in enumerate(zip(self.stages, self.transpconvs)):
+            x = transpconv(x)
+            x = torch.cat((x, skips[-(i + 2)]), 1)
+            x = stage(x)
+
+        return self.seg_layers[-1](x)

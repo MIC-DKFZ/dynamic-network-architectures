@@ -1,7 +1,9 @@
+import torch
 from torch import nn
 
 
-def drop_path(x, drop_prob: float = 0., training: bool = False, scale_by_keep: bool = True):
+def drop_path(x: torch.Tensor, drop_prob: float = 0., training: bool = False,
+              scale_by_keep: bool = True) -> torch.Tensor:
     """
     This function is taken from the timm package (https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/drop.py).
 
@@ -28,12 +30,13 @@ class DropPath(nn.Module):
 
     Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
     """
+
     def __init__(self, drop_prob: float = 0., scale_by_keep: bool = True):
         super(DropPath, self).__init__()
         self.drop_prob = drop_prob
         self.scale_by_keep = scale_by_keep
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return drop_path(x, self.drop_prob, self.training, self.scale_by_keep)
 
 
@@ -50,6 +53,7 @@ class SqueezeExcite(nn.Module):
         * global max pooling can be added to the squeeze aggregation
         * customizable activation, normalization, and gate layer
     """
+
     def __init__(
             self, channels, conv_op, rd_ratio=1. / 16, rd_channels=None, rd_divisor=8, add_maxpool=False,
             act_layer=nn.ReLU, norm_layer=None, gate_layer=nn.Sigmoid):
@@ -63,7 +67,7 @@ class SqueezeExcite(nn.Module):
         self.fc2 = conv_op(rd_channels, channels, kernel_size=1, bias=True)
         self.gate = gate_layer()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_se = x.mean((2, 3), keepdim=True)
         if self.add_maxpool:
             # experimental codepath, may remove or change

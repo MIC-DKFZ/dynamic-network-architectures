@@ -28,7 +28,6 @@ class ResidualEncoder(nn.Module):
                  nonlin_kwargs: dict = None,
                  block: Union[Type[BasicBlockD], Type[BottleneckD]] = BasicBlockD,
                  bottleneck_channels: Union[int, List[int], Tuple[int, ...]] = None,
-                 return_skips: bool = False,
                  disable_default_stem: bool = False,
                  stem_channels: int = None,
                  pool_type: str = 'conv',
@@ -55,7 +54,6 @@ class ResidualEncoder(nn.Module):
         :param nonlin_kwargs:
         :param block:
         :param bottleneck_channels: only needed if block is BottleneckD
-        :param return_skips: set this to True if used as encoder in a U-Net like network
         :param disable_default_stem: If True then no stem will be created. You need to build your own and ensure it is executed first, see todo.
         The stem in this implementation does not so stride/pooling so building your own stem is a necessity if you need this.
         :param stem_channels: if None, features_per_stage[0] will be used for the default stem. Not recommended for BottleneckD
@@ -119,7 +117,6 @@ class ResidualEncoder(nn.Module):
         self.stages = nn.Sequential(*stages)
         self.output_channels = features_per_stage
         self.strides = [maybe_convert_scalar_to_list(conv_op, i) for i in strides]
-        self.return_skips = return_skips
 
         # we store some things that a potential decoder needs
         self.conv_op = conv_op
@@ -132,17 +129,14 @@ class ResidualEncoder(nn.Module):
         self.conv_bias = conv_bias
         self.kernel_sizes = kernel_sizes
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
         if self.stem is not None:
             x = self.stem(x)
         ret = []
         for s in self.stages:
             x = s(x)
             ret.append(x)
-        if self.return_skips:
-            return ret
-        else:
-            return ret[-1]
+        return ret
 
     def compute_conv_feature_map_size(self, input_size):
         if self.stem is not None:
@@ -162,11 +156,12 @@ if __name__ == '__main__':
 
     model = ResidualEncoder(3, 5, (2, 4, 6, 8, 10), nn.Conv2d, 3, ((1, 1), 2, (2, 2), (2, 2), (2, 2)), 2, False,
                             nn.BatchNorm2d, None, None, None, nn.ReLU, None, stem_channels=7)
-    import hiddenlayer as hl
+    if False:
+        import hiddenlayer as hl
 
-    g = hl.build_graph(model, data,
-                       transforms=None)
-    g.save("network_architecture.pdf")
-    del g
+        g = hl.build_graph(model, data,
+                           transforms=None)
+        g.save("network_architecture.pdf")
+        del g
 
     print(model.compute_conv_feature_map_size((128, 160)))
