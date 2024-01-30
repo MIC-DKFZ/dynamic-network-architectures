@@ -73,13 +73,16 @@ class BasicBlockD(nn.Module):
 
         self.nonlin2 = nonlin(**nonlin_kwargs) if nonlin is not None else nn.Identity()
 
-        # Stochastic Depth
-        self.drop_path = DropPath(drop_prob=stochastic_depth_p) if stochastic_depth_p != 0.0 else nn.Identity()
-
-        # Squeeze Excitation
-        self.squeeze_excitation = SqueezeExcite(self.output_channels, conv_op,
-                                                rd_ratio=squeeze_excitation_reduction_ratio,
-                                                rd_divisor=8) if squeeze_excitation else nn.Identity()
+        drop_and_squeeze = []
+        if stochastic_depth_p != 0.0:
+            # Stochastic Depth
+            drop_and_squeeze.append(DropPath(drop_prob=stochastic_depth_p))
+        if squeeze_excitation:
+            # Squeeze Excitation
+            drop_and_squeeze.append(SqueezeExcite(self.output_channels, conv_op,
+                                                  rd_ratio=squeeze_excitation_reduction_ratio,
+                                                  rd_divisor=8))
+        self.drop_and_squeeze = nn.Sequential(*drop_and_squeeze) if len(drop_and_squeeze) else nn.Identity()
 
         has_stride = (isinstance(stride, int) and stride != 1) or any([i != 1 for i in stride])
         requires_projection = (input_channels != output_channels)
@@ -101,8 +104,7 @@ class BasicBlockD(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = self.skip(x)
         out = self.conv2(self.conv1(x))
-        out = self.drop_path(out)
-        out = self.squeeze_excitation(out)
+        out = self.drop_and_squeeze(out)
         out += residual
         return self.nonlin2(out)
 
@@ -194,14 +196,16 @@ class BottleneckD(nn.Module):
 
         self.nonlin3 = nonlin(**nonlin_kwargs) if nonlin is not None else nn.Identity()
 
-        # Stochastic Depth
-        self.apply_stochastic_depth = False if stochastic_depth_p == 0.0 else True
-        self.drop_path = DropPath(drop_prob=stochastic_depth_p) if stochastic_depth_p != 0.0 else nn.Identity()
-
-        # Squeeze Excitation
-        self.squeeze_excitation = SqueezeExcite(self.output_channels, conv_op,
-                                                rd_ratio=squeeze_excitation_reduction_ratio,
-                                                rd_divisor=8) if squeeze_excitation else nn.Identity()
+        drop_and_squeeze = []
+        if stochastic_depth_p != 0.0:
+            # Stochastic Depth
+            drop_and_squeeze.append(DropPath(drop_prob=stochastic_depth_p))
+        if squeeze_excitation:
+            # Squeeze Excitation
+            drop_and_squeeze.append(SqueezeExcite(self.output_channels, conv_op,
+                                                  rd_ratio=squeeze_excitation_reduction_ratio,
+                                                  rd_divisor=8))
+        self.drop_and_squeeze = nn.Sequential(*drop_and_squeeze) if len(drop_and_squeeze) else nn.Identity()
 
         has_stride = (isinstance(stride, int) and stride != 1) or any([i != 1 for i in stride])
         requires_projection = (input_channels != output_channels)
@@ -223,8 +227,7 @@ class BottleneckD(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = self.skip(x)
         out = self.conv3(self.conv2(self.conv1(x)))
-        out = self.drop_path(out)
-        out = self.squeeze_excitation(out)
+        out = self.drop_and_squeeze(out)
         out += residual
         return self.nonlin3(out)
 
