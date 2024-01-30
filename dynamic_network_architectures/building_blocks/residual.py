@@ -74,15 +74,12 @@ class BasicBlockD(nn.Module):
         self.nonlin2 = nonlin(**nonlin_kwargs) if nonlin is not None else nn.Identity()
 
         # Stochastic Depth
-        self.apply_stochastic_depth = False if stochastic_depth_p == 0.0 else True
-        if self.apply_stochastic_depth:
-            self.drop_path = DropPath(drop_prob=stochastic_depth_p)
+        self.drop_path = DropPath(drop_prob=stochastic_depth_p) if stochastic_depth_p != 0.0 else nn.Identity()
 
         # Squeeze Excitation
-        self.apply_se = squeeze_excitation
-        if self.apply_se:
-            self.squeeze_excitation = SqueezeExcite(self.output_channels, conv_op,
-                                                    rd_ratio=squeeze_excitation_reduction_ratio, rd_divisor=8)
+        self.squeeze_excitation = SqueezeExcite(self.output_channels, conv_op,
+                                                rd_ratio=squeeze_excitation_reduction_ratio,
+                                                rd_divisor=8) if squeeze_excitation else nn.Identity()
 
         has_stride = (isinstance(stride, int) and stride != 1) or any([i != 1 for i in stride])
         requires_projection = (input_channels != output_channels)
@@ -104,10 +101,8 @@ class BasicBlockD(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = self.skip(x)
         out = self.conv2(self.conv1(x))
-        if self.apply_stochastic_depth:
-            out = self.drop_path(out)
-        if self.apply_se:
-            out = self.squeeze_excitation(out)
+        out = self.drop_path(out)
+        out = self.squeeze_excitation(out)
         out += residual
         return self.nonlin2(out)
 
@@ -121,7 +116,8 @@ class BasicBlockD(nn.Module):
         # conv2
         output_size_conv2 = np.prod([self.output_channels, *size_after_stride], dtype=np.int64)
         # skip conv (if applicable)
-        if (self.input_channels != self.output_channels) or any([i != j for i, j in zip(input_size, size_after_stride)]):
+        if (self.input_channels != self.output_channels) or any(
+                [i != j for i, j in zip(input_size, size_after_stride)]):
             assert isinstance(self.skip, nn.Sequential)
             output_size_skip = np.prod([self.output_channels, *size_after_stride], dtype=np.int64)
         else:
@@ -200,14 +196,12 @@ class BottleneckD(nn.Module):
 
         # Stochastic Depth
         self.apply_stochastic_depth = False if stochastic_depth_p == 0.0 else True
-        if self.apply_stochastic_depth:
-            self.drop_path = DropPath(drop_prob=stochastic_depth_p)
+        self.drop_path = DropPath(drop_prob=stochastic_depth_p) if stochastic_depth_p != 0.0 else nn.Identity()
 
         # Squeeze Excitation
-        self.apply_se = squeeze_excitation
-        if self.apply_se:
-            self.squeeze_excitation = SqueezeExcite(self.output_channels, conv_op,
-                                                    rd_ratio=squeeze_excitation_reduction_ratio, rd_divisor=8)
+        self.squeeze_excitation = SqueezeExcite(self.output_channels, conv_op,
+                                                rd_ratio=squeeze_excitation_reduction_ratio,
+                                                rd_divisor=8) if squeeze_excitation else nn.Identity()
 
         has_stride = (isinstance(stride, int) and stride != 1) or any([i != 1 for i in stride])
         requires_projection = (input_channels != output_channels)
@@ -229,10 +223,8 @@ class BottleneckD(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = self.skip(x)
         out = self.conv3(self.conv2(self.conv1(x)))
-        if self.apply_stochastic_depth:
-            out = self.drop_path(out)
-        if self.apply_se:
-            out = self.squeeze_excitation(out)
+        out = self.drop_path(out)
+        out = self.squeeze_excitation(out)
         out += residual
         return self.nonlin3(out)
 
@@ -248,7 +240,8 @@ class BottleneckD(nn.Module):
         # conv3
         output_size_conv3 = np.prod([self.output_channels, *size_after_stride], dtype=np.int64)
         # skip conv (if applicable)
-        if (self.input_channels != self.output_channels) or any([i != j for i, j in zip(input_size, size_after_stride)]):
+        if (self.input_channels != self.output_channels) or any(
+                [i != j for i, j in zip(input_size, size_after_stride)]):
             assert isinstance(self.skip, nn.Sequential)
             output_size_skip = np.prod([self.output_channels, *size_after_stride], dtype=np.int64)
         else:
@@ -327,7 +320,8 @@ class StackedResidualBlocks(nn.Module):
             blocks = nn.Sequential(
                 block(conv_op, input_channels, bottleneck_channels[0], output_channels[0], kernel_size,
                       initial_stride, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs,
-                      nonlin, nonlin_kwargs, stochastic_depth_p, squeeze_excitation, squeeze_excitation_reduction_ratio),
+                      nonlin, nonlin_kwargs, stochastic_depth_p, squeeze_excitation,
+                      squeeze_excitation_reduction_ratio),
                 *[block(conv_op, output_channels[n - 1], bottleneck_channels[n], output_channels[n], kernel_size,
                         1, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs,
                         nonlin, nonlin_kwargs, stochastic_depth_p, squeeze_excitation,
@@ -341,9 +335,10 @@ class StackedResidualBlocks(nn.Module):
         return self.blocks(x)
 
     def compute_conv_feature_map_size(self, input_size):
-        assert len(input_size) == len(self.initial_stride), "just give the image size without color/feature channels or " \
-                                                    "batch channel. Do not give input_size=(b, c, x, y(, z)). " \
-                                                    "Give input_size=(x, y(, z))!"
+        assert len(input_size) == len(
+            self.initial_stride), "just give the image size without color/feature channels or " \
+                                  "batch channel. Do not give input_size=(b, c, x, y(, z)). " \
+                                  "Give input_size=(x, y(, z))!"
         output = self.blocks[0].compute_conv_feature_map_size(input_size)
         size_after_stride = [i // j for i, j in zip(input_size, self.initial_stride)]
         for b in self.blocks[1:]:
@@ -355,8 +350,8 @@ if __name__ == '__main__':
     data = torch.rand((1, 3, 40, 32))
 
     stx = StackedResidualBlocks(2, nn.Conv2d, 24, (16, 16), (3, 3), (1, 2),
-                                                norm_op=nn.BatchNorm2d, nonlin=nn.ReLU, nonlin_kwargs={'inplace': True},
-                                                block=BottleneckD, bottleneck_channels=3)
+                                norm_op=nn.BatchNorm2d, nonlin=nn.ReLU, nonlin_kwargs={'inplace': True},
+                                block=BottleneckD, bottleneck_channels=3)
     model = nn.Sequential(ConvDropoutNormReLU(nn.Conv2d,
                                               3, 24, 3, 1, True, nn.BatchNorm2d, {}, None, None, nn.LeakyReLU,
                                               {'inplace': True}),
