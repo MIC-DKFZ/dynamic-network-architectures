@@ -1,6 +1,6 @@
 from torch import nn
 
-from dynamic_network_architectures.building_blocks.residual import BasicBlockD
+from dynamic_network_architectures.building_blocks.residual import BasicBlockD, BottleneckD
 
 
 class InitWeights_He(object):
@@ -29,3 +29,6 @@ def init_last_bn_before_add_to_0(module):
     if isinstance(module, BasicBlockD):
         module.conv2.norm.weight = nn.init.constant_(module.conv2.norm.weight, 0)
         module.conv2.norm.bias = nn.init.constant_(module.conv2.norm.bias, 0)
+    if isinstance(module, BottleneckD):
+        module.conv3.norm.weight = nn.init.constant_(module.conv3.norm.weight, 0)
+        module.conv3.norm.bias = nn.init.constant_(module.conv3.norm.bias, 0)
