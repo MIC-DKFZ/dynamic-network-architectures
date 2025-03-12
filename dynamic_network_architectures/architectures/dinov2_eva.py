@@ -616,3 +616,38 @@ class Eva(nn.Module):
 
     def forward(self, x, masks=None, is_training=True):
         return self.forward_features_list(x, masks)
+
+
+class Eva_weight_fix(Eva):
+    """ Eva Vision Transformer w/ Abs & Rotary Pos Embed
+
+    This class implements the EVA and EVA02 models that were based on the BEiT ViT variant
+      * EVA - abs pos embed, global avg pool
+      * EVA02 - abs + rope pos embed, global avg pool, SwiGLU, scale Norm in MLP (ala normformer)
+
+
+    """
+
+    def _init_weights(self):
+
+        self.down_projection.apply(InitWeights_He(1e-2))
+
+        self.apply(self._init_weights_actual)
+        if self.pos_embed is not None:
+            trunc_normal_(self.pos_embed, std=.02)
+
+        self.fix_init_weight()
+
+    def _init_weights_actual(self):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    def fix_init_weight(self):
+        def rescale(param, layer_id):
+            param.div_(math.sqrt(2.0 * layer_id))
+
+        for layer_id, layer in enumerate(self.blocks):
+            rescale(layer.attn.proj.weight.data, layer_id + 1)
+            rescale(layer.mlp.fc2.weight.data, layer_id + 1)
