@@ -629,7 +629,6 @@ class Eva_weight_fix(Eva):
     """
 
     def _init_weights(self):
-
         self.down_projection.apply(InitWeights_He(1e-2))
 
         self.apply(self._init_weights_actual)
@@ -638,12 +637,6 @@ class Eva_weight_fix(Eva):
 
         self.fix_init_weight()
 
-    def _init_weights_actual(self):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
-
     def fix_init_weight(self):
         def rescale(param, layer_id):
             param.div_(math.sqrt(2.0 * layer_id))
@@ -651,3 +644,9 @@ class Eva_weight_fix(Eva):
         for layer_id, layer in enumerate(self.blocks):
             rescale(layer.attn.proj.weight.data, layer_id + 1)
             rescale(layer.mlp.fc2.weight.data, layer_id + 1)
+
+    def _init_weights_actual(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
