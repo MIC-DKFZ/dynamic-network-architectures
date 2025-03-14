@@ -28,11 +28,11 @@ def convert_conv_op_to_dim(conv_op: Type[_ConvNd]) -> int:
     :param conv_op: conv class
     :return: dimension: 1, 2 or 3
     """
-    if conv_op == nn.Conv1d:
+    if issubclass(conv_op, nn.Conv1d):
         return 1
-    elif conv_op == nn.Conv2d:
+    elif issubclass(conv_op, nn.Conv2d):
         return 2
-    elif conv_op == nn.Conv3d:
+    elif issubclass(conv_op, nn.Conv3d):
         return 3
     else:
         raise ValueError("Unknown dimension. Only 1d 2d and 3d conv are supported. got %s" % str(conv_op))
@@ -186,11 +186,11 @@ def maybe_convert_scalar_to_list(conv_op, scalar):
     :return:
     """
     if not isinstance(scalar, (tuple, list, np.ndarray)):
-        if conv_op == nn.Conv2d:
+        if issubclass(conv_op , nn.Conv2d):
             return [scalar] * 2
-        elif conv_op == nn.Conv3d:
+        elif issubclass(conv_op , nn.Conv3d):
             return [scalar] * 3
-        elif conv_op == nn.Conv1d:
+        elif issubclass(conv_op , nn.Conv1d):
             return [scalar] * 1
         else:
             raise RuntimeError("Invalid conv op: %s" % str(conv_op))
