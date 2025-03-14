@@ -60,7 +60,10 @@ class Primus(nn.Module):
         scale_attn_inner=False,
     ):
         """
-        consists of a UNet encoder, a EVA ViT bottleneck and a UNet decoder
+        Architecture as proposed in the Primus paper (https://arxiv.org/pdf/2503.01835)
+        `Primus: Enforcing Attention Usage for 3D Medical Image Segmentation`
+
+        consists of simple patch_embedding, a EVA ViT encoder with a few adatptations and a simple patch decoder.
         """
         assert input_shape is not None
         assert len(input_shape) == 3, "Currently on ly 3d is supported"
@@ -234,6 +237,12 @@ class PrimusS(PrimusX):
         init_values=0.1,
         scale_attn_inner=True,
     ):
+        """
+        Official Primus-S Architecture as proposed in the Primus paper (https://arxiv.org/pdf/2503.01835)
+        `Primus: Enforcing Attention Usage for 3D Medical Image Segmentation`
+
+        consists of simple patch_embedding, a EVA ViT encoder with a few adatptations and a simple patch decoder.
+        """
         super().__init__(
             input_channels=input_channels,
             output_channels=output_channels,
@@ -263,6 +272,12 @@ class PrimusB(PrimusX):
         init_values=0.1,
         scale_attn_inner=True,
     ):
+        """
+        Official Primus-B Architecture as proposed in the Primus paper (https://arxiv.org/pdf/2503.01835)
+        `Primus: Enforcing Attention Usage for 3D Medical Image Segmentation`
+
+        consists of simple patch_embedding, a EVA ViT encoder with a few adatptations and a simple patch decoder.
+        """
         super().__init__(
             input_channels=input_channels,
             output_channels=output_channels,
@@ -292,6 +307,12 @@ class PrimusM(PrimusX):
         init_values=0.1,
         scale_attn_inner=True,
     ):
+        """
+        Official Primus-M Architecture as proposed in the Primus paper (https://arxiv.org/pdf/2503.01835)
+        `Primus: Enforcing Attention Usage for 3D Medical Image Segmentation`
+
+        consists of simple patch_embedding, a EVA ViT encoder with a few adatptations and a simple patch decoder.
+        """
         super().__init__(
             input_channels=input_channels,
             output_channels=output_channels,
@@ -321,6 +342,12 @@ class PrimusL(PrimusX):
         init_values=0.1,
         scale_attn_inner=True,
     ):
+        """
+        Official Primus-L Architecture as proposed in the Primus paper (https://arxiv.org/pdf/2503.01835)
+        `Primus: Enforcing Attention Usage for 3D Medical Image Segmentation`
+
+        consists of simple patch_embedding, a EVA ViT encoder with a few adatptations and a simple patch decoder.
+        """
         super().__init__(
             input_channels=input_channels,
             output_channels=output_channels,
