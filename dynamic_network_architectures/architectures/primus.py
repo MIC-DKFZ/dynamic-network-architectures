@@ -3,6 +3,7 @@ import torch
 from torch import nn
 
 from timm.layers import RotaryEmbeddingCat
+from dynamic_network_architectures.architectures.abtract_arch import AbstractDynamicNetworkArchitectures, test_submodules_loadable
 from dynamic_network_architectures.building_blocks.eva import Eva
 from dynamic_network_architectures.building_blocks.patch_encode_decode import LayerNormNd, PatchDecode, PatchEmbed
 from dynamic_network_architectures.initialization.weight_init import InitWeights_He
@@ -33,7 +34,7 @@ _PRIMUS_CONFIGS = {
 }
 
 
-class Primus(nn.Module):
+class Primus(AbstractDynamicNetworkArchitectures):
 
     def __init__(
         self,
@@ -70,6 +71,9 @@ class Primus(nn.Module):
         assert all([j % i == 0 for i, j in zip(patch_embed_size, input_shape)])
 
         super().__init__()
+        self.key_to_encoder = "eva"
+        self.key_to_stem = "down_projection"
+        self.keys_to_in_proj = ("down_projection.proj",)
 
         self.down_projection = PatchEmbed(patch_embed_size, input_channels, embed_dim)
         self.up_projection = PatchDecode(
@@ -375,6 +379,8 @@ if __name__ == "__main__":
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
+    test_submodules_loadable(model)
+
     time.sleep(5)
     print("Primus B")
     model = PrimusB(1, 2, (8, 8, 8), (96, 96, 96)).cuda()
@@ -383,6 +389,7 @@ if __name__ == "__main__":
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
+    test_submodules_loadable(model)
     time.sleep(5)
 
     print("Primus M")
@@ -392,6 +399,7 @@ if __name__ == "__main__":
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
+    test_submodules_loadable(model)
     time.sleep(5)
 
     print("Primus L")
@@ -401,4 +409,5 @@ if __name__ == "__main__":
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
+    test_submodules_loadable(model)
     time.sleep(5)
