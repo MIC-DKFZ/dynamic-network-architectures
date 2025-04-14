@@ -108,7 +108,7 @@ class PlainConvUNet(AbstractDynamicNetworkArchitectures):
         InitWeights_He(1e-2)(module)
 
 
-class ResidualEncoderUNet(nn.Module):
+class ResidualEncoderUNet(AbstractDynamicNetworkArchitectures):
     def __init__(
         self,
         input_channels: int,
