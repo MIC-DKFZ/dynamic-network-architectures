@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from dynamic_network_architectures.architectures.abtract_arch import AbstractDynamicNetworkArchitectures, test_submodules_loadable
+from dynamic_network_architectures.architectures.abstract_arch import AbstractDynamicNetworkArchitectures, test_submodules_loadable
 from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
 from dynamic_network_architectures.building_blocks.helper import get_matching_pool_op, get_default_network_config
 

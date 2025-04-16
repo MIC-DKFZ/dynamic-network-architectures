@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 from timm.layers import RotaryEmbeddingCat
-from dynamic_network_architectures.architectures.abtract_arch import (
+from dynamic_network_architectures.architectures.abstract_arch import (
     AbstractDynamicNetworkArchitectures,
     test_submodules_loadable,
 )

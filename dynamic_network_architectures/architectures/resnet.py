@@ -1,5 +1,5 @@
 import torch
-from dynamic_network_architectures.architectures.abtract_arch import (
+from dynamic_network_architectures.architectures.abstract_arch import (
     AbstractDynamicNetworkArchitectures,
     test_submodules_loadable,
 )
