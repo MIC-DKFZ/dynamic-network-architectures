@@ -44,7 +44,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
         input_channels: int,
         embed_dim: int,
         patch_embed_size: Tuple[int, ...],
-        output_channels: int,
+        num_classes: int,
         eva_depth: int = 24,
         eva_numheads: int = 16,
         input_shape: Tuple[int, ...] = None,
@@ -81,7 +81,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
 
         self.down_projection = PatchEmbed(patch_embed_size, input_channels, embed_dim)
         self.up_projection = PatchDecode(
-            patch_embed_size, embed_dim, output_channels, norm=decoder_norm, activation=decoder_act
+            patch_embed_size, embed_dim, num_classes, norm=decoder_norm, activation=decoder_act
         )
 
         # we need to compute the ref_feat_shape for eva
@@ -218,7 +218,7 @@ class PrimusX(Primus):
             input_channels=input_channels,
             embed_dim=conf["embed_dim"],
             patch_embed_size=patch_embed_size,
-            output_channels=output_channels,
+            num_classes=output_channels,
             eva_depth=conf["eva_depth"],
             eva_numheads=conf["eva_numheads"],
             input_shape=input_shape,
