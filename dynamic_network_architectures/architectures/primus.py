@@ -191,7 +191,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
         if ret_mask:
             return dec_out, full_mask
         else:
-            return dec_out, None
+            return dec_out
 
     def compute_conv_feature_map_size(self, input_size):
         raise NotImplementedError("yuck")
