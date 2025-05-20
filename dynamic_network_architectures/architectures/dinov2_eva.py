@@ -496,18 +496,13 @@ class Eva(nn.Module):
 
         # If needed, interpolate only patch embeddings
         if (source_D, source_H, source_W) != (target_D, target_H, target_W):
-            pos_embed = self.interpolate_pos_encoding_3d(
-                pos_embed,
-                source_size=(source_D, source_H, source_W),
-                target_size=(target_D, target_H, target_W),
-                num_prefix_tokens=self.num_prefix_tokens
-            )
-            # global_rot_pos_embed = self.interpolate_pos_encoding_3d(
-            #     global_rot_pos_embed.unsqueeze(0),
-            #     source_size=(source_D, source_H, source_W),
-            #     target_size=(target_D, target_H, target_W),
-            #     num_prefix_tokens=0
-            # ).squeeze(0)
+            if pos_embed is not None:
+                pos_embed = self.interpolate_pos_encoding_3d(
+                    pos_embed,
+                    source_size=(source_D, source_H, source_W),
+                    target_size=(target_D, target_H, target_W),
+                    num_prefix_tokens=self.num_prefix_tokens
+                )
             rot_pos_embed = self.local_rope.get_embed() if self.local_rope is not None else None
         else:
             rot_pos_embed = self.global_rope.get_embed() if self.global_rope is not None else None
