@@ -16,12 +16,10 @@ class LayerNormNd(nn.Module):
         u = x.mean(1, keepdim=True)
         s = (x - u).pow(2).mean(1, keepdim=True)
         x = (x - u) / torch.sqrt(s + self.eps)
-        # Create proper indexing tuple for broadcasting
-        weight_shape = [1, -1] + [1] * (x.ndim - 2)
-        bias_shape = [1, -1] + [1] * (x.ndim - 2)
+        idx = (None, slice(None), *([None] * (x.ndim - 2)))
         x = (
-            self.weight.view(weight_shape) * x
-            + self.bias.view(bias_shape)
+            self.weight[idx] * x
+            + self.bias[idx]
         )
         return x
 
