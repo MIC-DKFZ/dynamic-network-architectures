@@ -70,11 +70,11 @@ def initialize(module):
     InitWeights_He(1e-2)(module)
     init_last_bn_before_add_to_0(module)
 
-def U2NET_full(dim):
+def U2NET_full(dim, in_ch):
     full = {
         # cfgs for building RSUs and sides
         # {stage : [name, (height(L), in_ch, mid_ch, out_ch, dilated), side]}
-        'stage1': ['En_1', (7, 3, 32, 64), -1],
+        'stage1': ['En_1', (7, in_ch, 32, 64), -1],
         'stage2': ['En_2', (6, 64, 32, 128), -1],
         'stage3': ['En_3', (5, 128, 64, 256), -1],
         'stage4': ['En_4', (4, 256, 128, 512), -1],
@@ -89,11 +89,11 @@ def U2NET_full(dim):
     return U2NET(full, dim, out_ch=1)
 
 
-def U2NET_lite(dim):
+def U2NET_lite(dim, in_ch):
     lite = {
         # cfgs for building RSUs and sides
         # {stage : [name, (height(L), in_ch, mid_ch, out_ch, dilated), side]}
-        'stage1': ['En_1', (7, 3, 16, 64), -1],
+        'stage1': ['En_1', (7, in_ch, 16, 64), -1],
         'stage2': ['En_2', (6, 64, 16, 64), -1],
         'stage3': ['En_3', (5, 64, 16, 64), -1],
         'stage4': ['En_4', (4, 64, 16, 64), -1],
