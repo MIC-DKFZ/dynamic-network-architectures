@@ -180,7 +180,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
             mask = rearrange(restoration_mask, "b (w h d) -> b w h d", h=H, w=W, d=D)
             full_mask = (
                 mask.repeat_interleave(FW // W, dim=1)
-                .repeat_interleave(FH // H, dim=2) sc
+                .repeat_interleave(FH // H, dim=2)
                 .repeat_interleave(FD // D, dim=3)
             )
             full_mask = full_mask[:, None, ...]  # Add channel dimension  # [B, 1, W, H, D]
