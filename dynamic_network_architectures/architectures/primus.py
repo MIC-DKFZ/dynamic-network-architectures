@@ -160,7 +160,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
         B, C, W, H, D = x.shape
         num_patches = W * H * D
 
-        x = rearrange(x, "b c w h d -> b (h w d) c")
+        x = rearrange(x, "b c w h d -> b (w h d) c")
         if self.register_tokens is not None:
             x = torch.cat(
                 (
@@ -175,12 +175,12 @@ class Primus(AbstractDynamicNetworkArchitectures):
             x = x[:, self.register_tokens.shape[1] :]  # Removes the register tokens
         # In-fill in-active patches with empty tokens
         restored_x, restoration_mask = self.restore_full_sequence(x, keep_indices, num_patches)
-        x = rearrange(restored_x, "b (h w d) c -> b c w h d", h=H, w=W, d=D)
+        x = rearrange(restored_x, "b (w h d) c -> b c w h d", h=H, w=W, d=D)
         if restoration_mask is not None:
-            mask = rearrange(restoration_mask, "b (h w d) -> b w h d", h=H, w=W, d=D)
+            mask = rearrange(restoration_mask, "b (w h d) -> b w h d", h=H, w=W, d=D)
             full_mask = (
                 mask.repeat_interleave(FW // W, dim=1)
-                .repeat_interleave(FH // H, dim=2)
+                .repeat_interleave(FH // H, dim=2) sc
                 .repeat_interleave(FD // D, dim=3)
             )
             full_mask = full_mask[:, None, ...]  # Add channel dimension  # [B, 1, W, H, D]
