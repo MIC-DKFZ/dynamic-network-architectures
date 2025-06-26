@@ -172,6 +172,7 @@ class EvaAttention(nn.Module):
                 dropout_p=self.attn_drop.p if self.training else 0.,
             )
         else:
+            raise RuntimeError("Fused attention should be used.")
             q = q * self.scale
             attn = (q @ k.transpose(-2, -1))
 
@@ -575,7 +576,7 @@ class Eva(nn.Module):
     def prepare_tokens_with_masks(self, x, masks=None):
         b, nc, d, w, h = x.shape
         x = self.down_projection(x)
-        x = rearrange(x, 'b c w h d -> b (h w d) c')
+        x = rearrange(x, 'b c w h d -> b (w h d) c')
 
         if masks is not None:
             x = torch.where(masks.unsqueeze(-1), self.mask_token.to(x.dtype).unsqueeze(0), x).squeeze(0)
