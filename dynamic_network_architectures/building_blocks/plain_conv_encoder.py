@@ -27,7 +27,8 @@ class PlainConvEncoder(nn.Module):
                  nonlin_kwargs: dict = None,
                  return_skips: bool = False,
                  nonlin_first: bool = False,
-                 pool: str = 'conv'
+                 pool: str = 'conv',
+                 **kwargs
                  ):
 
         super().__init__()
