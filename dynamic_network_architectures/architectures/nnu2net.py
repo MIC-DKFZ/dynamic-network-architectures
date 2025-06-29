@@ -5,21 +5,24 @@ import torch.nn.functional as F
 from dynamic_network_architectures.building_blocks.helper import convert_dim_to_conv_op, get_matching_pool_op, get_matching_batchnorm, convert_conv_op_to_dim
 from torch.nn.modules.conv import _ConvNd
 
-
+######todo: metti tutti i kernel size e strides in tutte le classi rebnconv chiamate e in tutte le conv_op
 
 class REBNCONV(nn.Module):
     def __init__(self, 
                  dim, 
-                 activation = nn.ReLU, 
-                 input_channels = 1, 
-                 output_channels = 1, 
-                 dirate = 1):
+                 activation, 
+                 input_channels, 
+                 output_channels, 
+                 kernel_size,
+                 strides,
+                 conv_bias,
+                 dirate):
         super(REBNCONV, self).__init__()
 
         conv_op = convert_dim_to_conv_op(dim)
-        bn = get_matching_batchnorm(dim)
+        bn = get_matching_batchnorm(dimension=dim)
         
-        self.conv_s1 = conv_op(input_channels, output_channels, 3, padding = 1*dirate, dilation = 1*dirate)
+        self.conv_s1 = conv_op(input_channels, output_channels, kernel_size, strides, padding = 1*dirate, dilation = 1*dirate, bias = conv_bias)
         self.bn_s1 = bn(output_channels)
         self.act_s1 = activation(inplace = True) #previously self.relu_s1
 
@@ -40,40 +43,48 @@ def _upsample_like(dim, src, tar):
 ### RSU-7 ###
 class RSU7(nn.Module):#UNet07DRES(nn.Module):
 
-    def __init__(self, dim, activation_f, input_channels, mid_ch, output_channels):
+    def __init__(self, 
+                 dim, 
+                 activation_funct,
+                 input_channels,
+                 mid_ch,
+                 output_channels,
+                 kernel_size,
+                 strides,
+                 conv_bias):
         super(RSU7, self).__init__()
 
-        self.activ = activation_f
+        self.activ = activation_funct
         self.dim = dim
         pool_op = get_matching_pool_op(dimension = dim, pool_type = "max")
         
-        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, dirate = 1)
+        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
-        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, dirate = 1)
-        self.pool1 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool1 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv2 = REBNCONV(self.dim, self.activ, self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool2 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv2 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool2 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool3 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool3 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool4 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool4 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv5 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool5 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv5 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool5 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv6 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
+        self.rebnconv6 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
 
-        self.rebnconv7 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 2)
+        self.rebnconv7 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 2)
 
-        self.rebnconv6d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv5d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv4d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, dirate = 1)
+        self.rebnconv6d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv5d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv4d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
     def forward(self, x):
 
@@ -121,36 +132,44 @@ class RSU7(nn.Module):#UNet07DRES(nn.Module):
 ### RSU-6 ###
 class RSU6(nn.Module):#UNet06DRES(nn.Module):
 
-    def __init__(self, dim, activation_f, input_channels, mid_ch, output_channels):
+    def __init__(self, 
+                 dim, 
+                 activation_funct,
+                 input_channels,
+                 mid_ch,
+                 output_channels,
+                 kernel_size,
+                 strides,
+                 conv_bias):
         super(RSU6, self).__init__()
 
-        self.activ = activation_f
+        self.activ = activation_funct
         self.dim = dim
         pool_op = get_matching_pool_op(dimension = dim, pool_type = "max")
         
-        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, dirate = 1)
+        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
-        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, dirate = 1)
-        self.pool1 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool1 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv2 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool2 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv2 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool2 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool3 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool3 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool4 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool4 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv5 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
+        self.rebnconv5 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
 
-        self.rebnconv6 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 2)
+        self.rebnconv6 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 2)
 
-        self.rebnconv5d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv4d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, dirate = 1)
+        self.rebnconv5d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv4d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
     def forward(self, x):
 
@@ -194,32 +213,40 @@ class RSU6(nn.Module):#UNet06DRES(nn.Module):
 ### RSU-5 ###
 class RSU5(nn.Module):#UNet05DRES(nn.Module):
 
-    def __init__(self, dim, activation_f, input_channels, mid_ch, output_channels):
+    def __init__(self, 
+                 dim, 
+                 activation_funct,
+                 input_channels,
+                 mid_ch,
+                 output_channels,
+                 kernel_size,
+                 strides,
+                 conv_bias):
         super(RSU5, self).__init__()
 
-        self.activ = activation_f
+        self.activ = activation_funct
         self.dim = dim
         pool_op = get_matching_pool_op(dimension = dim, pool_type = "max")
         
-        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, dirate = 1)
+        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
-        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, dirate = 1)
-        self.pool1 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool1 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv2 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool2 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv2 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool2 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool3 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool3 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
+        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
 
-        self.rebnconv5 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 2)
+        self.rebnconv5 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 2)
 
-        self.rebnconv4d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, dirate = 1)
+        self.rebnconv4d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
     def forward(self, x):
 
@@ -256,28 +283,36 @@ class RSU5(nn.Module):#UNet05DRES(nn.Module):
 ### RSU-4 ###
 class RSU4(nn.Module):#UNet04DRES(nn.Module):
 
-    def __init__(self, dim, activation_f, input_channels, mid_ch, output_channels):
+    def __init__(self, 
+                 dim, 
+                 activation_funct,
+                 input_channels,
+                 mid_ch,
+                 output_channels,
+                 kernel_size,
+                 strides,
+                 conv_bias):
         super(RSU4, self).__init__()
 
-        self.activ = activation_f
+        self.activ = activation_funct
         self.dim = dim
         pool_op = get_matching_pool_op(dimension = dim, pool_type = "max")
         
-        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, dirate = 1)
+        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
-        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, dirate = 1)
-        self.pool1 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool1 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv2 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
-        self.pool2 = pool_op(2, stride = 2, ceil_mode = True)
+        self.rebnconv2 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.pool2 = pool_op(2, strides, ceil_mode = True)
 
-        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 1)
+        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
 
-        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 2)
+        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 2)
 
-        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 1)
-        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, dirate = 1)
+        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
     def forward(self, x):
 
@@ -308,23 +343,31 @@ class RSU4(nn.Module):#UNet04DRES(nn.Module):
 ### RSU-4F ###
 class RSU4F(nn.Module):#UNet04FRES(nn.Module):
 
-    def __init__(self, dim, activation_f, input_channels, mid_ch, output_channels):
+    def __init__(self, 
+                 dim, 
+                 activation_funct,
+                 input_channels,
+                 mid_ch,
+                 output_channels,
+                 kernel_size,
+                 strides,
+                 conv_bias):
         super(RSU4F, self).__init__()
         
-        self.activ = activation_f
+        self.activ = activation_funct
         self.dim = dim
         
-        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, dirate = 1)
+        self.rebnconvin = REBNCONV(self.dim, self.activ, input_channels, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
-        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, dirate = 1)
-        self.rebnconv2 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 2)
-        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 4)
+        self.rebnconv1 = REBNCONV(self.dim, self.activ, output_channels, mid_ch, kernel_size, strides, conv_bias, dirate = 1)
+        self.rebnconv2 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 2)
+        self.rebnconv3 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 4)
 
-        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, dirate = 8)
+        self.rebnconv4 = REBNCONV(self.dim, self.activ, mid_ch, mid_ch, kernel_size, strides, conv_bias, dirate = 8)
 
-        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 4)
-        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, dirate = 2)
-        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, dirate = 1)
+        self.rebnconv3d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 4)
+        self.rebnconv2d = REBNCONV(self.dim, self.activ, mid_ch*2, mid_ch, kernel_size, strides, conv_bias, dirate = 2)
+        self.rebnconv1d = REBNCONV(self.dim, self.activ, mid_ch*2, output_channels, kernel_size, strides, conv_bias, dirate = 1)
 
     def forward(self, x):
 
@@ -345,7 +388,7 @@ class RSU4F(nn.Module):#UNet04FRES(nn.Module):
         return hx1d + hxin
 
 
-##### U^2-Net ####
+##### U^2-Net #### TODO: implement also this. tbf, I think it'll be too long to be ever used, still gonna change it asap
 class U2NET(nn.Module):
 
     def __init__(self, 
@@ -365,19 +408,19 @@ class U2NET(nn.Module):
         conv_op = convert_dim_to_conv_op(self.dim)
         
         self.stage1 = RSU7(self.dim, self.activ, input_channels, 32, 64)
-        self.pool12 = pool_op(2, stride = 2, ceil_mode = True)
+        self.pool12 = pool_op(2, self.strides, ceil_mode = True)
 
         self.stage2 = RSU6(self.dim, self.activ, 64, 32, 128)
-        self.pool23 = pool_op(2, stride = 2, ceil_mode = True)
+        self.pool23 = pool_op(2, self.strides, ceil_mode = True)
 
         self.stage3 = RSU5(self.dim, self.activ, 128, 64, 256)
-        self.pool34 = pool_op(2, stride = 2, ceil_mode = True)
+        self.pool34 = pool_op(2, self.strides, ceil_mode = True)
 
         self.stage4 = RSU4(self.dim, self.activ, 256, 128, 512)
-        self.pool45 = pool_op(2, stride = 2, ceil_mode = True)
+        self.pool45 = pool_op(2, self.strides, ceil_mode = True)
 
         self.stage5 = RSU4F(self.dim, self.activ, 512, 256, 512)
-        self.pool56 = pool_op(2, stride = 2, ceil_mode = True)
+        self.pool56 = pool_op(2, self.strides, ceil_mode = True)
 
         self.stage6 = RSU4F(self.dim, self.activ, 512, 256, 512)
 
@@ -480,57 +523,66 @@ class U2NETP(nn.Module):
 
     def __init__(self, 
                 conv_op: Type[_ConvNd], 
-                input_channels: int = 1, 
+                input_channels: int, 
+                num_classes: int,
+                kernel_sizes: Union[int, List[int], Tuple[int, ...]],
+                strides: Union[int, List[int], Tuple[int, ...]],
+                conv_bias: bool = False,
                 deep_supervision: bool = True, 
                 nonlin: Union[None, Type[torch.nn.Module]] = None, 
                 nonlin_kwargs: dict = None, 
                 output_channels: int = 1, 
-                activation_function = nn.ReLU, ##RSU blocks nonlinearity. Default is ReLU. 
+                activation_function: Union[None, Type[torch.nn.Module]] = nn.ReLU, ##RSU blocks nonlinearity. Default is ReLU. 
                 nonlin_first: bool = False #not sure if I care doing that also for RSU. I guess not NGL. We'll see.
                  ):
         super(U2NETP, self).__init__()
 
-        self.dim = convert_conv_op_to_dim(conv_op)
+        self.conv_op = conv_op
+        self.dim = convert_conv_op_to_dim(self.conv_op)
         self.nonlin = nonlin #storing this even if not used
         self.activ_kwargs = nonlin_kwargs
         self.activ = activation_function
         self.deep_supervision = deep_supervision
-        
+        self.strides = tuple(strides)
+        self.kernel_sizes = tuple(kernel_sizes)
+        self.num_classes = num_classes
+        self.conv_bias = conv_bias
         
         pool_op = get_matching_pool_op(dimension = self.dim, pool_type = "max")
         
-        self.stage1 = RSU7(self.dim, self.activ, input_channels, 16, 64)
-        self.pool12 = pool_op(2, stride = 2, ceil_mode = True)
+        self.stage1 = RSU7(self.dim, self.activ, input_channels, 16, 64, kernel_sizes[0], self.strides[0], self.conv_bias)
+        self.pool12 = pool_op(2, self.strides, ceil_mode = True)
 
-        self.stage2 = RSU6(self.dim, self.activ, 64, 16, 64)
-        self.pool23 = pool_op(2, stride = 2, ceil_mode = True)
+        self.stage2 = RSU6(self.dim, self.activ, 64, 16, 64, kernel_sizes, strides, self.conv_bias)
+        self.pool23 = pool_op(2, self.strides, ceil_mode = True)
 
-        self.stage3 = RSU5(self.dim, self.activ, 64, 16, 64)
-        self.pool34 = pool_op(2, stride = 2, ceil_mode = True)
+        self.stage3 = RSU5(self.dim, self.activ, 64, 16, 64, kernel_sizes, self.strides, self.conv_bias)
+        self.pool34 = pool_op(2, self.strides, ceil_mode = True)
 
-        self.stage4 = RSU4(self.dim, self.activ, 64, 16, 64)
-        self.pool45 = pool_op(2, stride = 2, ceil_mode = True)
+        self.stage4 = RSU4(self.dim, self.activ, 64, 16, 64, kernel_sizes, self.strides, self.conv_bias)
+        self.pool45 = pool_op(2, self.strides, ceil_mode = True)
 
-        self.stage5 = RSU4F(self.dim, self.activ, 64, 16, 64)
-        self.pool56 = pool_op(2, stride = 2, ceil_mode = True)
+        self.stage5 = RSU4F(self.dim, self.activ, 64, 16, 64, kernel_sizes, self.strides, self.conv_bias)
+        self.pool56 = pool_op(2, self.strides, ceil_mode = True)
 
-        self.stage6 = RSU4F(self.dim, self.activ, 64, 16, 64)
+        self.stage6 = RSU4F(self.dim, self.activ, 64, 16, 64, kernel_sizes, self.strides, self.conv_bias)
 
         # decoder
-        self.stage5d = RSU4F(self.dim, self.activ, 128, 16, 64)
-        self.stage4d = RSU4(self.dim, self.activ, 128, 16, 64)
-        self.stage3d = RSU5(self.dim, self.activ, 128, 16, 64)
-        self.stage2d = RSU6(self.dim, self.activ, 128, 16, 64)
-        self.stage1d = RSU7(self.dim, self.activ, 128, 16, 64)
+        self.stage5d = RSU4F(self.dim, self.activ, 128, 16, 64, kernel_sizes, self.strides, self.conv_bias)
+        self.stage4d = RSU4(self.dim, self.activ, 128, 16, 64, kernel_sizes, self.strides, self.conv_bias)
+        self.stage3d = RSU5(self.dim, self.activ, 128, 16, 64, kernel_sizes, self.strides, self.conv_bias)
+        self.stage2d = RSU6(self.dim, self.activ, 128, 16, 64, kernel_sizes, self.strides, self.conv_bias)
+        self.stage1d = RSU7(self.dim, self.activ, 128, 16, 64, kernel_sizes, self.strides, self.conv_bias)
 
-        self.side1 = conv_op(64, output_channels, 3, padding = 1)
-        self.side2 = conv_op(64, output_channels, 3, padding = 1)
-        self.side3 = conv_op(64, output_channels, 3, padding = 1)
-        self.side4 = conv_op(64, output_channels, 3, padding = 1)
-        self.side5 = conv_op(64, output_channels, 3, padding = 1)
-        self.side6 = conv_op(64, output_channels, 3, padding = 1)
+        self.side1 = conv_op(64, output_channels, kernel_sizes, self.strides, padding = 1, bias = self.conv_bias)
+        self.side2 = conv_op(64, output_channels, kernel_sizes, self.strides, padding = 1, bias = self.conv_bias)
+        self.side3 = conv_op(64, output_channels, kernel_sizes, self.strides, padding = 1, bias = self.conv_bias)
+        self.side4 = conv_op(64, output_channels, kernel_sizes, self.strides, padding = 1, bias = self.conv_bias)
+        self.side5 = conv_op(64, output_channels, kernel_sizes, self.strides, padding = 1, bias = self.conv_bias)
+        self.side6 = conv_op(64, output_channels, kernel_sizes, self.strides, padding = 1, bias = self.conv_bias)
 
         self.outconv = conv_op(6*output_channels, output_channels, 1)
+        
 
     def forward(self, x):
 
