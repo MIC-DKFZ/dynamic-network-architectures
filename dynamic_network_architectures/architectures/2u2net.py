@@ -17,7 +17,7 @@ class U2Net(AbstractDynamicNetworkArchitectures):
         norm_op_kwargs: dict,
         dropout_op,
         dropout_op_kwargs: dict,
-        nonlin,
+        nonlin, ########## TODO: ideally we want to be able to define different nonlinearities for both RSUBlock and "general" nonlinearity (the one used by nnUNet)
         nonlin_kwargs: dict,
         deep_supervision: bool = True,
         return_skips: bool = True,
@@ -46,7 +46,7 @@ class U2Net(AbstractDynamicNetworkArchitectures):
             return_skips,
             nonlin_first,
             pool,
-            depth_per_stage=depth_per_stage
+            depth_per_stage = depth_per_stage
         )
         self.decoder = RSUDecoder(
             features_per_stage,
@@ -62,7 +62,7 @@ class U2Net(AbstractDynamicNetworkArchitectures):
     def forward(self, x):
         skips = self.encoder(x)
         outputs = self.decoder(skips)
-        if self.deep_supervision:
-            return outputs  # lista di tensori, uno per ogni scala
+        if self.training and self.deep_supervision: ###### validation wants only the last output so can't use only "if self.deep_supervision"
+            return outputs  # tensor list
         else:
-            return outputs[0]  # solo l'output finale
+            return outputs[0]  # return only the last output (both in case of no deep supervision and in case of deep supervision during validation)

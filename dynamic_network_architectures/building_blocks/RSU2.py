@@ -1,21 +1,31 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-
+#TODO: utilizzare le varie funzioni modulari di helper.py tipo _get_matching_pool_op, _from_conv_get_dim (o come si chiamano)
 class RSUBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, mid_ch, depth=4, conv_op=nn.Conv2d, kernel_size=3, stride=1, bias=True, nonlin=nn.ReLU, norm_op=nn.BatchNorm2d):
+    def __init__(self,
+                in_ch,
+                out_ch,
+                mid_ch,
+                depth = 4,
+                conv_op = nn.Conv2d,
+                kernel_size = 3,
+                stride = 1,
+                bias = True,
+                nonlin = nn.ReLU,
+                norm_op = nn.BatchNorm2d):
+        
         super().__init__()
+        # Parameters
         self.depth = depth
         self.encoders = nn.ModuleList()
         self.pools = nn.ModuleList()
         self.decoders = nn.ModuleList()
-
-        # Primo conv
         self.conv_in = conv_op(in_ch, out_ch, kernel_size, stride, padding=kernel_size//2, bias=bias)
         self.nonlin = nonlin()
         self.norm = norm_op(out_ch)
 
-        # Encoder path
+        # Encoder path 
         for i in range(depth):
             self.encoders.append(conv_op(out_ch if i == 0 else mid_ch, mid_ch, kernel_size, stride, padding=kernel_size//2, bias=bias))
             self.pools.append(nn.MaxPool2d(2, 2))
@@ -23,7 +33,7 @@ class RSUBlock(nn.Module):
         # Bottom
         self.bottom = conv_op(mid_ch, mid_ch, kernel_size, stride, padding=kernel_size//2, bias=bias)
 
-        # Decoder path
+        # Decoder path  TODO: capire bene come si comporta, lo ha modificato copilot per risolvere errore di dimensione
         for i in range(depth):
             # L'ultimo skip è x_in (out_ch), gli altri sono mid_ch
             skip_ch = out_ch if i == depth - 1 else mid_ch
@@ -34,18 +44,19 @@ class RSUBlock(nn.Module):
             )
 
     def forward(self, x):
-        x_in = self.nonlin(self.norm(self.conv_in(x)))
+        x_in = self.nonlin(self.norm(self.conv_in(x))) #This is the original REBNCONV
         enc_feats = [x_in]
         xi = x_in
         # Encoder
         for enc, pool in zip(self.encoders, self.pools):
             xi = self.nonlin(enc(xi))
             enc_feats.append(xi)
-            # SOLO SE LA DIMENSIONE È > 1x1
+            # ONLY IF DIMENSION > 1x1 
+            ##### questo risolve degli errori di dimensione quando si usa il pooling
             if xi.shape[2] > 1 and xi.shape[3] > 1:
                 xi = pool(xi)
-        # Bottom
-        xb = self.nonlin(self.bottom(xi))
+        # Bottleneck
+        xb = self.nonlin(self.bottom(xi)) #
         # Decoder
         xu = xb
         for i, dec in enumerate(self.decoders):
@@ -75,10 +86,10 @@ class RSUEncoder(nn.Module):
         dropout_op_kwargs,
         nonlin,
         nonlin_kwargs,
-        return_skips=True,
-        nonlin_first=False,
-        pool="max",
-        depth_per_stage=None
+        return_skips = True,
+        nonlin_first = False,
+        pool = "max",
+        depth_per_stage = None
     ):
         super().__init__()
         self.return_skips = return_skips
@@ -114,23 +125,32 @@ class RSUEncoder(nn.Module):
 
 
 class RSUDecoder(nn.Module):
-    def __init__(self, features_per_stage, depth_per_stage, conv_op, kernel_sizes, strides, bias, nonlin, norm_op):
+    def __init__(self, 
+                features_per_stage, 
+                depth_per_stage, 
+                conv_op, 
+                kernel_sizes, 
+                strides, 
+                bias, 
+                nonlin, 
+                norm_op):
+        
         super().__init__()
         self.stages = nn.ModuleList()
         n_stages = len(features_per_stage)
         for i in range(n_stages-1, 0, -1):
             self.stages.append(
                 RSUBlock(
-                    in_ch=features_per_stage[i]+features_per_stage[i-1],  # skip + upsampled
-                    out_ch=features_per_stage[i-1],
-                    mid_ch=features_per_stage[i-1]//2,
-                    depth=depth_per_stage[i-1],
-                    conv_op=conv_op,
-                    kernel_size=kernel_sizes[i-1][0] if isinstance(kernel_sizes[i-1], (list, tuple)) else kernel_sizes[i-1],
-                    stride=1,
-                    bias=bias,
-                    nonlin=nonlin,
-                    norm_op=norm_op
+                    in_ch = features_per_stage[i]+features_per_stage[i-1],  # skip + upsampled
+                    out_ch = features_per_stage[i-1],
+                    mid_ch = features_per_stage[i-1]//2,
+                    depth = depth_per_stage[i-1],
+                    conv_op = conv_op,
+                    kernel_size = kernel_sizes[i-1][0] if isinstance(kernel_sizes[i-1], (list, tuple)) else kernel_sizes[i-1],
+                    stride = 1,
+                    bias = bias,
+                    nonlin = nonlin,
+                    norm_op = norm_op
                 )
             )
 
@@ -142,6 +162,6 @@ class RSUDecoder(nn.Module):
             x = torch.cat([x, skips[-(i+2)]], dim=1)
             x = stage(x)
             outputs.append(x)
-        # Ordina dal più profondo al più superficiale (come nnU-Net)
+        # Order the outputs from the last to the first 
         outputs = outputs[::-1]
         return outputs
