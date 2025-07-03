@@ -1,11 +1,20 @@
 from torch import nn
 from dynamic_network_architectures.architectures.abstract_arch import AbstractDynamicNetworkArchitectures
 from dynamic_network_architectures.building_blocks.RSU2 import RSUEncoder, RSUDecoder
+from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim
+from typing import Union, List, Tuple, Type
 
+from torch.nn.modules.dropout import _DropoutNd
+
+from dynamic_network_architectures.building_blocks.simple_conv_blocks import StackedConvBlocks
+from dynamic_network_architectures.building_blocks.helper import get_matching_convtransp
+
+#TODO: va fixata la deep supervision
 class U2Net(AbstractDynamicNetworkArchitectures):
     def __init__(
         self,
         input_channels: int,
+        num_classes: int, 
         n_stages: int,
         features_per_stage: list,
         conv_op,
@@ -26,8 +35,8 @@ class U2Net(AbstractDynamicNetworkArchitectures):
         depth_per_stage: list = None,
         **kwargs
     ):
-        self.deep_supervision = deep_supervision
         super().__init__()
+        self.deep_supervision = deep_supervision
         self.encoder = RSUEncoder(
             input_channels,
             n_stages,
@@ -48,21 +57,18 @@ class U2Net(AbstractDynamicNetworkArchitectures):
             pool,
             depth_per_stage = depth_per_stage
         )
-        self.decoder = RSUDecoder(
-            features_per_stage,
-            depth_per_stage,
-            conv_op,
-            kernel_sizes,
-            strides,
-            conv_bias,
-            nonlin,
-            norm_op
-        )
-
+        self.decoder = RSUDecoder(self.encoder, num_classes, deep_supervision) 
+        
     def forward(self, x):
         skips = self.encoder(x)
-        outputs = self.decoder(skips)
-        if self.training and self.deep_supervision: ###### validation wants only the last output so can't use only "if self.deep_supervision"
-            return outputs  # tensor list
-        else:
-            return outputs[0]  # return only the last output (both in case of no deep supervision and in case of deep supervision during validation)
+        return self.decoder(skips)
+    
+    def compute_conv_feature_map_size(self, input_size):
+        assert len(input_size) == convert_conv_op_to_dim(self.encoder.conv_op), (
+            "just give the image size without color/feature channels or "
+            "batch channel. Do not give input_size=(b, c, x, y(, z)). "
+            "Give input_size=(x, y(, z))!"
+        )
+        return self.encoder.compute_conv_feature_map_size(input_size) + self.decoder.compute_conv_feature_map_size(
+            input_size
+        )
