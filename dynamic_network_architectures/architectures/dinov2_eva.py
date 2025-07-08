@@ -329,7 +329,8 @@ class Eva(nn.Module):
             num_reg_tokens: int = 0,
             drop_path_scale: bool = True,
             rope_impl = RotaryEmbeddingCat,
-            rope_kwargs = None
+            rope_kwargs = None,
+            grad_checkpointing = False,
     ):
         """
         Diff to timm implementation
@@ -358,7 +359,7 @@ class Eva(nn.Module):
 
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.dynamic_img_size = dynamic_img_size
-        self.grad_checkpointing = False
+        self.grad_checkpointing = grad_checkpointing
 
         self.num_reg_tokens = num_reg_tokens
         self.num_class_tokens = (1 if class_token else 0)
@@ -607,6 +608,61 @@ class Eva(nn.Module):
                 x = checkpoint(blk, x, rope=rot_pos_embed)
             else:
                 x = blk(x, rope=rot_pos_embed)
+        x = self.norm(x)
+        return {
+            "x_norm_clstoken": x[:, 0] if self.num_class_tokens > 0 else None,
+            "x_norm_regtokens": x[:, self.num_class_tokens:self.num_prefix_tokens],
+            "x_norm_patchtokens": x[:, self.num_prefix_tokens:],
+            "x_prenorm": x,
+            "masks": masks,
+        }
+
+    def forward(self, x, masks=None, is_training=True):
+        return self.forward_features_list(x, masks)
+
+
+class BlockChunk(nn.ModuleList):
+    def forward(self, x, rope=None, attn_mask=None):
+        for blk in self:
+            x = blk(x, rope=rope, attn_mask=attn_mask)
+        return x
+
+
+class EvaWithChunking(Eva):
+    def __init__(self, *args, block_chunks: int = 1, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.block_chunks = block_chunks
+        self.chunked_blocks = block_chunks > 0 and block_chunks < len(self.blocks)
+
+        if self.chunked_blocks:
+            self._apply_block_chunking()
+
+    def _apply_block_chunking(self):
+        depth = len(self.blocks)
+        chunksize = depth // self.block_chunks
+        chunks = []
+        for i in range(0, depth, chunksize):
+            block_chunk = BlockChunk(self.blocks[i: i + chunksize])
+            chunks.append(block_chunk)
+        self.blocks = nn.ModuleList(chunks)
+
+    def forward_features(self, x, masks=None):
+        x, rot_pos_embed = self.prepare_tokens_with_masks(x, masks)
+
+        if self.chunked_blocks:
+            for chunk in self.blocks:
+                if self.grad_checkpointing and not torch.jit.is_scripting():
+                    x = checkpoint(chunk, x, rope=rot_pos_embed)
+                else:
+                    x = chunk(x, rope=rot_pos_embed)
+        else:
+            for blk in self.blocks:
+                if self.grad_checkpointing and not torch.jit.is_scripting():
+                    x = checkpoint(blk, x, rope=rot_pos_embed)
+                else:
+                    x = blk(x, rope=rot_pos_embed)
+
         x = self.norm(x)
         return {
             "x_norm_clstoken": x[:, 0] if self.num_class_tokens > 0 else None,
