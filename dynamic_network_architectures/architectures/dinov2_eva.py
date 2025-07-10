@@ -431,8 +431,14 @@ class Eva(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
+        def init_fn(m):
+            if isinstance(m, nn.Linear):
+                trunc_normal_(m.weight, std=0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        self.apply(init_fn)
         self.down_projection.apply(InitWeights_He(1e-2))
-        self.apply(InitWeights_He(1e-2))
 
         if self.pos_embed is not None:
             trunc_normal_(self.pos_embed, std=.02)
@@ -441,17 +447,17 @@ class Eva(nn.Module):
         if self.reg_token is not None:
             trunc_normal_(self.reg_token, std=.02)
         if self.mask_token is not None:
-            trunc_normal_(self.mask_token, std=.02)  #TOD: Eva original std=1e-6
+            trunc_normal_(self.mask_token, std=.02)
 
-        self.fix_init_weight()
-
-    def fix_init_weight(self):
+        # Inline fix_init_weight
         def rescale(param, layer_id):
             param.div_(math.sqrt(2.0 * layer_id))
 
         for layer_id, layer in enumerate(self.blocks):
-            rescale(layer.attn.proj.weight.data, layer_id + 1)
-            rescale(layer.mlp.fc2.weight.data, layer_id + 1)
+            if hasattr(layer.attn.proj, 'weight'):
+                rescale(layer.attn.proj.weight.data, layer_id + 1)
+            if hasattr(layer.mlp.fc2, 'weight'):
+                rescale(layer.mlp.fc2.weight.data, layer_id + 1)
 
     @torch.jit.ignore
     def no_weight_decay(self):
