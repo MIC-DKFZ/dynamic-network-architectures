@@ -14,6 +14,49 @@ __author__ = ["Stefano Petraccini"]
 __email__ = ["stefano.petraccini@studio.unibo.it"]
 
 class RSUBlock(nn.Module):
+    """
+    Residual U-shaped (RSU) block for neural network architectures.
+    
+    This block implements a mini U-Net architecture within each level of a larger network.
+    It consists of an encoder path that downsamples the input, a bottleneck layer,
+    and a decoder path that upsamples back to the original resolution with skip connections.
+    A residual connection is added between the input and output.
+    
+    Parameters
+    ----------
+    in_ch : int
+        Number of input channels.
+    out_ch : int
+        Number of output channels.
+    mid_ch : int, optional
+        Number of channels in the middle layers. If None, defaults to out_ch // 2.
+    depth : int, default=4
+        Depth of the RSU block, determining how many downsampling operations occur.
+    conv_op : Type[nn.Module], default=nn.Conv2d
+        Type of convolution operation.
+    kernel_size : int or tuple or list, default=3
+        Size of the convolving kernel.
+    stride : int or tuple or list, default=1
+        Stride of the convolution.
+    bias : bool, default=True
+        If True, adds a learnable bias to the convolution layers.
+    nonlin : Type[nn.Module], optional, default=nn.ReLU
+        Type of nonlinearity to use.
+    norm_op : Type[nn.Module], optional, default=nn.BatchNorm2d
+        Type of normalization to use.
+    norm_op_kwargs : dict, optional
+        Additional arguments for the normalization operation.
+    dropout_op : Type[nn.Module], optional
+        Type of dropout to use.
+    dropout_op_kwargs : dict, optional
+        Additional arguments for the dropout operation.
+    nonlin_kwargs : dict, optional
+        Additional arguments for the nonlinearity.
+    pool : str, default="max"
+        Type of pooling to use ("max" or "avg").
+    nonlin_first : bool, default=False
+        if True you get conv -> nonlin -> norm. Else it's conv -> norm -> nonlin
+    """
     def __init__(
         self,
         in_ch: int,
@@ -40,19 +83,19 @@ class RSUBlock(nn.Module):
         self.pools = nn.ModuleList()
         self.decoders = nn.ModuleList()
 
-        # Determina la dimensione (2D o 3D)
+        # Here we define the dimensions based on the conv_op type
         dim = convert_conv_op_to_dim(conv_op)
         kernel_size = maybe_convert_scalar_to_list(conv_op, kernel_size)
         stride = maybe_convert_scalar_to_list(conv_op, stride)
         padding = [k // 2 for k in kernel_size]
 
-        # Funzioni di attivazione, normalizzazione e dropout
+        # Activation and dropout defaults
         nonlin_kwargs = {} if nonlin_kwargs is None else nonlin_kwargs
         norm_op_kwargs = {} if norm_op_kwargs is None else norm_op_kwargs
         self.nonlin = nonlin(**nonlin_kwargs) if nonlin else nn.Identity()
         self.dropout = dropout_op(**(dropout_op_kwargs or {})) if dropout_op else nn.Identity()
 
-        # Ingresso
+        # Input convolution
         self.conv_in = conv_op(in_ch, out_ch, kernel_size, stride, padding=padding, bias=bias)
         self.norm_in = norm_op(out_ch, **norm_op_kwargs) if norm_op else nn.Identity()
 
@@ -86,10 +129,38 @@ class RSUBlock(nn.Module):
             )
 
     def _apply_block(self, conv, norm, nonlin, x):
+        """
+        Apply a convolutional block with normalization and nonlinearity.
+        
+        Parameters
+        ----------
+        conv : nn.Module
+            Convolution layer.
+        norm : nn.Module
+            Normalization layer.
+        nonlin : nn.Module
+            Nonlinearity function.
+        x : torch.Tensor
+            Input tensor.
+            
+        Returns
+        -------
+        torch.Tensor
+            Output tensor after applying convolution, normalization, and nonlinearity.
+            
+        Notes
+        -----
+        The order of operations depends on self.nonlin_first:
+        - If True: conv -> nonlin -> norm
+        - If False: conv -> norm -> nonlin
+        
+        For InstanceNorm with small spatial dimensions (prod(spatial_dims) <= 1),
+        normalization is skipped to avoid numerical issues.
+        """
         x = conv(x)
-        # Controllo robusto per InstanceNorm2d e InstanceNorm3d
+        # Check if the norm is an instance of InstanceNorm and if the spatial dimensions are too small
         is_instancenorm = isinstance(norm, (nn.InstanceNorm2d, nn.InstanceNorm3d))
-        # Le dimensioni spaziali sono tutte dopo la seconda (batch, canali, ...)
+        # The spatial dimensions are all after the second (batch, channels, ...)
         spatial_dims = x.shape[2:]
         too_small_for_instancenorm = np.prod(spatial_dims) <= 1
 
@@ -101,16 +172,31 @@ class RSUBlock(nn.Module):
                 x = norm(x)
                 x = nonlin(x)
         else:
-            # Se saltiamo la normalizzazione, applichiamo solo l'attivazione
+            # if norm is Identity or InstanceNorm with too small spatial dimensions
             x = nonlin(x)
     
         return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the RSU block.
+        
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, in_ch, *spatial_dims).
+            
+        Returns
+        -------
+        torch.Tensor
+            Output tensor of shape (batch_size, out_ch, *spatial_dims).
+            The spatial dimensions remain the same as the input.
+        """
         x_in = self._apply_block(self.conv_in, self.norm_in, self.nonlin, x)
         x_in = self.dropout(x_in)
         enc_feats = [x_in]
         xi = x_in
+
         # Encoder
         for enc, norm, pool in zip(self.encoders, self.enc_norms, self.pools):
             xi = self._apply_block(enc, norm, self.nonlin, xi)
@@ -118,9 +204,11 @@ class RSUBlock(nn.Module):
             enc_feats.append(xi)
             if all(s > 1 for s in xi.shape[2:]):
                 xi = pool(xi)
+
         # Bottleneck
         xb = self._apply_block(self.bottom, self.norm_bottom, self.nonlin, xi)
         xb = self.dropout(xb)
+
         # Decoder
         xu = xb
         for i, (dec, norm) in enumerate(zip(self.decoders, self.dec_norms)):
@@ -135,7 +223,55 @@ class RSUBlock(nn.Module):
             xu = F.interpolate(xu, size=x_in.shape[2:], mode=mode, align_corners=False)
         return xu + x_in
 
+
 class RSUEncoder(nn.Module):
+    """
+    Encoder part of the network using RSU blocks.
+    
+    This encoder creates a series of RSU blocks that progressively reduce the spatial
+    dimensions of the input while increasing the number of channels.
+    
+    Parameters
+    ----------
+    input_channels : int
+        Number of input channels.
+    n_stages : int
+        Number of stages (RSU blocks) in the encoder.
+    features_per_stage : List[int]
+        Number of output channels for each stage.
+    conv_op : Type[nn.Module]
+        Type of convolution operation.
+    kernel_sizes : List[Union[int, Tuple[int, ...], List[int]]]
+        Kernel sizes for each stage.
+    strides : List[Union[int, Tuple[int, ...], List[int]]]
+        Strides for each stage.
+    n_conv_per_stage : Union[int, List[int], Tuple[int, ...]]
+        Number of convolutions per stage.
+    conv_bias : bool
+        If True, adds a learnable bias to the convolution layers.
+    norm_op : Optional[Type[nn.Module]]
+        Type of normalization to use.
+    norm_op_kwargs : Optional[dict]
+        Additional arguments for the normalization operation.
+    dropout_op : Optional[Type[nn.Module]]
+        Type of dropout to use.
+    dropout_op_kwargs : Optional[dict]
+        Additional arguments for the dropout operation.
+    nonlin : Optional[Type[nn.Module]]
+        Type of nonlinearity to use.
+    nonlin_kwargs : Optional[dict]
+        Additional arguments for the nonlinearity.
+    return_skips : bool, default=True
+        If True, returns intermediate feature maps (skips) for U-Net-like architectures.
+    nonlin_first : bool, default=False
+        If True, applies nonlinearity before normalization.
+    pool : str, default="max"
+        Type of pooling to use ("max" or "avg").
+    depth_per_stage : Optional[List[int]], default=None
+        Depth of each RSU block. If None, all blocks use depth=4.
+    blocks_nonlin : Optional[Type[nn.Module]], default=None
+        Specific nonlinearity for RSU blocks. If None, uses the same as nonlin.
+    """
     def __init__(
         self,
         input_channels: int,
@@ -144,7 +280,6 @@ class RSUEncoder(nn.Module):
         conv_op: Type[nn.Module],
         kernel_sizes: List[Union[int, Tuple[int, ...], List[int]]],
         strides: List[Union[int, Tuple[int, ...], List[int]]],
-        n_conv_per_stage: Union[int, List[int], Tuple[int, ...]],
         conv_bias: bool,
         norm_op: Optional[Type[nn.Module]],
         norm_op_kwargs: Optional[dict],
@@ -202,6 +337,22 @@ class RSUEncoder(nn.Module):
             prev_ch = features_per_stage[i]
 
     def forward(self, x: torch.Tensor) -> Union[List[torch.Tensor], torch.Tensor]:
+        """
+        Forward pass of the RSU encoder.
+        
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, input_channels, *spatial_dims).
+            
+        Returns
+        -------
+        Union[List[torch.Tensor], torch.Tensor]
+            If return_skips is True:
+                List of feature maps from each stage, for use in a decoder with skip connections.
+            Otherwise:
+                Output tensor from the final stage.
+        """
         skips = []
         for stage in self.stages:
             x = stage(x)
@@ -211,6 +362,19 @@ class RSUEncoder(nn.Module):
         return x
     
     def compute_conv_feature_map_size(self, input_size: List[int]) -> int:
+        """
+        Compute the number of parameters in the convolutional feature maps.
+        
+        Parameters
+        ----------
+        input_size : List[int]
+            Spatial dimensions of the input tensor (excluding batch and channel dimensions).
+            
+        Returns
+        -------
+        int
+            Number of parameters in the convolutional feature maps.
+        """
         output = np.int64(0)
         for s in range(len(self.stages)):
             if isinstance(self.stages[s], nn.Sequential):
@@ -222,7 +386,28 @@ class RSUEncoder(nn.Module):
             input_size = [i // j for i, j in zip(input_size, self.strides[s])]
         return output
 
+
 class RSUDecoder(nn.Module):
+    """
+    Decoder part of a network using RSU blocks.
+    
+    This decoder creates a series of RSU blocks that progressively increase the spatial
+    dimensions of the input while decreasing the number of channels. It uses skip
+    connections from a corresponding encoder.
+    
+    Parameters
+    ----------
+    encoder : RSUEncoder
+        The encoder to get skip connections from and share parameters with.
+    num_classes : int
+        Number of output classes for the final segmentation layer.
+    deep_supervision : bool, default=False
+        If True, returns intermediate outputs for deep supervision.
+    blocks_nonlin : Optional[Type[nn.Module]], default=None
+        Specific nonlinearity for RSU blocks. If None, uses the same as in the encoder.
+    nonlin_first : bool, default=False
+        If True, applies nonlinearity before normalization.
+    """
     def __init__(
         self,
         encoder: RSUEncoder,
@@ -268,6 +453,22 @@ class RSUDecoder(nn.Module):
         ])
 
     def forward(self, skips: List[torch.Tensor]) -> Union[torch.Tensor, List[torch.Tensor]]:
+        """
+        Forward pass of the RSU decoder.
+        
+        Parameters
+        ----------
+        skips : List[torch.Tensor]
+            List of feature maps from the encoder, in order from input to bottleneck.
+            
+        Returns
+        -------
+        Union[torch.Tensor, List[torch.Tensor]]
+            If deep_supervision is False:
+                Final output tensor with shape (batch_size, num_classes, *spatial_dims).
+            Otherwise:
+                List of output tensors at different resolutions for deep supervision.
+        """
         x = skips[-1]
         outputs = []
         for i, stage in enumerate(self.stages):
@@ -287,6 +488,19 @@ class RSUDecoder(nn.Module):
         return r
 
     def compute_conv_feature_map_size(self, input_size: List[int]) -> int:
+        """
+        Compute the number of parameters in the convolutional feature maps.
+        
+        Parameters
+        ----------
+        input_size : List[int]
+            Spatial dimensions of the input tensor (excluding batch and channel dimensions).
+            
+        Returns
+        -------
+        int
+            Number of parameters in the convolutional feature maps.
+        """
         skip_sizes = []
         for s in range(len(self.encoder.strides) - 1):
             skip_sizes.append([i // j for i, j in zip(input_size, self.encoder.strides[s])])
