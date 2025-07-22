@@ -1,108 +1,144 @@
+from typing import Union, Type, List, Tuple
 import torch
 from torch import nn
+from torch.nn.modules.conv import _ConvNd
+from torch.nn.modules.dropout import _DropoutNd
 
-from dynamic_network_architectures.building_blocks.helper import convert_dim_to_conv_op, get_matching_pool_op
-from dynamic_network_architectures.building_blocks.RSUblock import RSU, _size_map, _upsample_like
-from dynamic_network_architectures.initialization.weight_init import InitWeights_He
-from dynamic_network_architectures.initialization.weight_init import init_last_bn_before_add_to_0
-
+from dynamic_network_architectures.architectures.abstract_arch import AbstractDynamicNetworkArchitectures
+from dynamic_network_architectures.building_blocks.RSU_blocks import RSUEncoder, RSUDecoder
+from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim
 
 __author__ = ["Stefano Petraccini"]
 __email__ = ["stefano.petraccini@studio.unibo.it"]
 
+class U2Net(AbstractDynamicNetworkArchitectures):
+    """
+    U2Net architecture: nested u-structure for salient object detection.
 
-class U2NET(nn.Module):
-    def __init__(self, cfgs, dim, out_ch):
-        super(U2NET, self).__init__()
-        self.dim = dim
-        self.out_ch = out_ch
-        self._make_layers(cfgs, dim)
+    Parameters
+    ----------
+    input_channels : int
+        Number of input channels (e.g., 1 for grayscale, 3 for RGB).
+    n_stages : int
+        Number of stages in the encoder.
+    features_per_stage : Union[int, List[int], Tuple[int, ...]]
+        Number of features (channels) per stage. Can be a single integer for uniform features or
+        a list/tuple of integers for different features per stage.
+    conv_op : Type[_ConvNd]
+        Type of convolution operation to use (e.g., nn.Conv2d, nn.Conv3d).
+    kernel_sizes : Union[int, List[int], Tuple[int, ...]]
+        Kernel sizes to use for the convolutional layers.
+    strides : Union[int, List[int], Tuple[int, ...]]
+        Strides for the convolutional layers.
+    n_conv_per_stage : Union[int, List[int], Tuple[int, ...]]
+        Number of convolutional layers per stage. Can be a single integer for uniform number of convolutions or
+        a list/tuple of integers for different numbers of convolutions per stage.
+    num_classes : int
+        Number of output classes for the segmentation task.
+    conv_bias : bool, default=False
+        If True, adds a learnable bias to the convolution layers.
+    norm_op : Union[None, Type[nn.Module]], default=None
+        Type of normalization to use (e.g., nn.BatchNorm2d, nn.InstanceNorm2d).
+        If None, no normalization is applied.
+    norm_op_kwargs : dict, default=None
+        Additional arguments for the normalization operation.
+    dropout_op : Union[None, Type[_DropoutNd]], default=None
+        Type of dropout to use (e.g., nn.Dropout2d, nn.Dropout3d).
+        If None, no dropout is applied.
+    dropout_op_kwargs : dict, default=None
+        Additional arguments for the dropout operation.
+    nonlin : Union[None, Type[torch.nn.Module]], default=None
+        Type of nonlinearity to use (e.g., nn.ReLU, nn.LeakyReLU).
+        If None, no nonlinearity is applied.
+    nonlin_kwargs : dict, default=None
+        Additional arguments for the nonlinearity.
+    blocks_nonlin : Union[None, Type[torch.nn.Module]], default=None
+        Specific nonlinearity for RSU blocks. If None, uses the same as nonlin.
+    blocks_nonlin_kwargs : dict, default=None
+        Additional arguments for the RSU block nonlinearity.
+    deep_supervision : bool, default=False
+        If True, returns intermediate outputs for deep supervision during training.
+    return_skips : bool, default=True
+        If True, returns intermediate feature maps (skips) from the encoder for U-Net-like architectures.
+    nonlin_first : bool, default=False
+        If True, applies nonlinearity before normalization.
+    pool : str, default="max"
+        Type of pooling to use ("max" or "avg").
+    depth_per_stage : Union[int, List[int], Tuple[int, ...]], default=None
+        Depth of each RSU block. If None, all blocks use the default depth.
+    
+    References
+    ----------
+    .. [1] Qin, X., Zhang, Z., Huang, C., Dehghan, M., Zaiane, O.R., & Jagersand, M. (2020).
+        U2-Net: Going Deeper with Nested U-Structure for Salient Object Detection.
+        Pattern Recognition, 106, 107404.
+    """
+    def __init__(
+        self,
+        input_channels: int,
+        n_stages: int,
+        features_per_stage: Union[int, List[int], Tuple[int, ...]],
+        conv_op: Type[_ConvNd],
+        kernel_sizes: Union[int, List[int], Tuple[int, ...]],
+        strides: Union[int, List[int], Tuple[int, ...]],
+        num_classes: int,
+        conv_bias: bool = False,
+        norm_op: Union[None, Type[nn.Module]] = None,
+        norm_op_kwargs: dict = None,
+        dropout_op: Union[None, Type[_DropoutNd]] = None,
+        dropout_op_kwargs: dict = None,
+        nonlin: Union[None, Type[torch.nn.Module]] = None,
+        nonlin_kwargs: dict = None,
+        blocks_nonlin: Union[None, Type[torch.nn.Module]] = None,
+        blocks_nonlin_kwargs: dict = None,
+        deep_supervision: bool = False,
+        return_skips: bool = True,
+        nonlin_first: bool = False,
+        pool: str = "max",
+        depth_per_stage: Union[int, List[int], Tuple[int, ...]] = None
+    ):
+        super().__init__()
+        # If we don't have a specific nonlinearity for blocks, use the default nonlin
+        if blocks_nonlin is None:
+            blocks_nonlin = nonlin
+            blocks_nonlin_kwargs = nonlin_kwargs 
+
+        self.deep_supervision = deep_supervision
+        self.encoder = RSUEncoder(
+            input_channels,
+            n_stages,
+            features_per_stage,
+            conv_op,
+            kernel_sizes,
+            strides,
+            conv_bias,
+            norm_op,
+            norm_op_kwargs,
+            dropout_op,
+            dropout_op_kwargs,
+            blocks_nonlin,  
+            blocks_nonlin_kwargs,
+            return_skips,
+            nonlin_first,
+            pool,
+            depth_per_stage=depth_per_stage
+        )
+        self.decoder = RSUDecoder(
+            self.encoder,
+            num_classes,
+            deep_supervision = deep_supervision
+        )
 
     def forward(self, x):
-        sizes = _size_map(x, self.height)
-        maps = []  # storage for maps
+        skips = self.encoder(x)
+        return self.decoder(skips)
 
-        # side saliency map
-        def unet(x, height=1):
-            if height < 6:
-                x1 = getattr(self, f'stage{height}')(x)
-                x2 = unet(getattr(self, 'downsample')(x1), height + 1)
-                x = getattr(self, f'stage{height}d')(torch.cat((x2, x1), 1))
-                side(x, height)
-                return _upsample_like(x, self.dim, sizes[height - 1]) if height > 1 else x
-            else:
-                x = getattr(self, f'stage{height}')(x)
-                side(x, height)
-                return _upsample_like(x, self.dim, sizes[height - 1])
-
-        def side(x, h):
-            # side output saliency map (before sigmoid)
-            x = getattr(self, f'side{h}')(x)
-            x = _upsample_like(x, self.dim, sizes[1])
-            maps.append(x)
-
-        def fuse():
-            # fuse saliency probability maps
-            maps.reverse()
-            x = torch.cat(maps, 1)
-            x = getattr(self, 'outconv')(x)
-            maps.insert(0, x)
-            return [torch.sigmoid(x) for x in maps]
-
-        unet(x)
-        maps = fuse()
-        return maps
-
-    def _make_layers(self, cfgs, dim):
-        self.height = int((len(cfgs) + 1) / 2)
-        self.add_module('downsample', get_matching_pool_op(dimension=dim, pool_type="max")(2, stride=2, ceil_mode=True))
-        for k, v in cfgs.items():
-            # build rsu block
-            self.add_module(k, RSU(v[0], dim, *v[1]))
-            if v[2] > 0:
-                # build side layer
-                self.add_module(f'side{v[0][-1]}', convert_dim_to_conv_op(dim)(v[2], self.out_ch, 3, padding=1))
-        # build fuse layer
-        self.add_module('outconv', convert_dim_to_conv_op(dim)(int(self.height * self.out_ch), self.out_ch, 1))
-      
-@staticmethod
-def initialize(module):
-    InitWeights_He(1e-2)(module)
-    init_last_bn_before_add_to_0(module)
-
-def U2NET_full(dim, in_ch):
-    full = {
-        # cfgs for building RSUs and sides
-        # {stage : [name, (height(L), in_ch, mid_ch, out_ch, dilated), side]}
-        'stage1': ['En_1', (7, in_ch, 32, 64), -1],
-        'stage2': ['En_2', (6, 64, 32, 128), -1],
-        'stage3': ['En_3', (5, 128, 64, 256), -1],
-        'stage4': ['En_4', (4, 256, 128, 512), -1],
-        'stage5': ['En_5', (4, 512, 256, 512, True), -1],
-        'stage6': ['En_6', (4, 512, 256, 512, True), 512],
-        'stage5d': ['De_5', (4, 1024, 256, 512, True), 512],
-        'stage4d': ['De_4', (4, 1024, 128, 256), 256],
-        'stage3d': ['De_3', (5, 512, 64, 128), 128],
-        'stage2d': ['De_2', (6, 256, 32, 64), 64],
-        'stage1d': ['De_1', (7, 128, 16, 64), 64],
-    }
-    return U2NET(full, dim, out_ch=1)
-
-
-def U2NET_lite(dim, in_ch):
-    lite = {
-        # cfgs for building RSUs and sides
-        # {stage : [name, (height(L), in_ch, mid_ch, out_ch, dilated), side]}
-        'stage1': ['En_1', (7, in_ch, 16, 64), -1],
-        'stage2': ['En_2', (6, 64, 16, 64), -1],
-        'stage3': ['En_3', (5, 64, 16, 64), -1],
-        'stage4': ['En_4', (4, 64, 16, 64), -1],
-        'stage5': ['En_5', (4, 64, 16, 64, True), -1],
-        'stage6': ['En_6', (4, 64, 16, 64, True), 64],
-        'stage5d': ['De_5', (4, 128, 16, 64, True), 64],
-        'stage4d': ['De_4', (4, 128, 16, 64), 64],
-        'stage3d': ['De_3', (5, 128, 16, 64), 64],
-        'stage2d': ['De_2', (6, 128, 16, 64), 64],
-        'stage1d': ['De_1', (7, 128, 16, 64), 64],
-    }
-    return U2NET(lite, dim, out_ch=1)
+    def compute_conv_feature_map_size(self, input_size):
+        assert len(input_size) == convert_conv_op_to_dim(self.encoder.conv_op), (
+            "just give the image size without color/feature channels or "
+            "batch channel. Do not give input_size=(b, c, x, y(, z)). "
+            "Give input_size=(x, y(, z))!"
+        )
+        return self.encoder.compute_conv_feature_map_size(input_size) + self.decoder.compute_conv_feature_map_size(
+            input_size
+        )
