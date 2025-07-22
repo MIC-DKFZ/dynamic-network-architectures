@@ -84,9 +84,9 @@ class RSUBlock(nn.Module):
         self.decoders = nn.ModuleList()
 
         # Here we define the dimensions based on the conv_op type
-        dim = convert_conv_op_to_dim(conv_op)
+        #dim = convert_conv_op_to_dim(conv_op)
         kernel_size = maybe_convert_scalar_to_list(conv_op, kernel_size)
-        stride = maybe_convert_scalar_to_list(conv_op, stride)
+        self.strides = maybe_convert_scalar_to_list(conv_op, stride)
         padding = [k // 2 for k in kernel_size]
 
         # Activation and dropout defaults
@@ -222,6 +222,59 @@ class RSUBlock(nn.Module):
             mode = 'trilinear' if xu.dim() == 5 else 'bilinear'
             xu = F.interpolate(xu, size=x_in.shape[2:], mode=mode, align_corners=False)
         return xu + x_in
+    
+    def compute_conv_feature_map_size(self, input_size: List[int]) -> int:
+        """
+        Compute the number of parameters in the convolutional feature maps.
+        
+        Parameters
+        ----------
+        input_size : List[int]
+            Spatial dimensions of the input tensor (excluding batch and channel dimensions).
+            
+        Returns
+        -------
+        int
+            Number of parameters in the convolutional feature maps.
+        """
+        output = np.int64(0)
+        
+        # Input convolution feature map
+        out_ch = self.conv_in.out_channels
+        output += np.prod([out_ch, *input_size], dtype=np.int64)
+        
+        # Encoder path feature maps
+        enc_sizes = [input_size]
+        curr_size = input_size
+        
+        # Always ensure we have enough encoder sizes even when input is small
+        for i in range(self.depth):
+            # Account for pooling if dimensions are large enough
+            if all(s > 1 for s in curr_size):
+                curr_size = [s // 2 for s in curr_size]  # Pool by factor of 2
+            else:
+                # If dimensions are too small, don't reduce further
+                curr_size = curr_size
+                
+            enc_sizes.append(curr_size)
+            # Add encoder feature map size
+            out_ch = self.encoders[i].out_channels
+            output += np.prod([out_ch, *curr_size], dtype=np.int64)
+        
+        # Bottleneck feature map
+        out_ch = self.bottom.out_channels
+        output += np.prod([out_ch, *curr_size], dtype=np.int64)
+        
+        # Decoder path feature maps
+        for i in range(self.depth):
+            # Skip connection level (safely access with bounds checking)
+            idx = min(i+2, len(enc_sizes))
+            skip_size = enc_sizes[-idx]
+            # Feature map after concatenation and convolution
+            out_ch = self.decoders[i].out_channels
+            output += np.prod([out_ch, *skip_size], dtype=np.int64)
+        
+        return output
 
 
 class RSUEncoder(nn.Module):
@@ -303,6 +356,7 @@ class RSUEncoder(nn.Module):
         self.dropout_op_kwargs = dropout_op_kwargs
         self.conv_bias = conv_bias
         self.kernel_sizes = kernel_sizes
+        self.strides = strides
         self.return_skips = return_skips
         self.features_per_stage = features_per_stage
         self.depth_per_stage = depth_per_stage if depth_per_stage is not None else [4] * n_stages
@@ -509,7 +563,7 @@ class RSUDecoder(nn.Module):
         output = np.int64(0)
         for s in range(len(self.stages)):
             output += self.stages[s].compute_conv_feature_map_size(skip_sizes[-(s+1)])
-            output += np.prod([self.encoder.output_channels[-(s+2)], *skip_sizes[-(s+1)]], dtype=np.int64)
+            output += np.prod([self.encoder.features_per_stage[-(s+2)], *skip_sizes[-(s+1)]], dtype=np.int64)
             if self.deep_supervision or (s == (len(self.stages) - 1)):
                 output += np.prod([self.num_classes, *skip_sizes[-(s+1)]], dtype=np.int64)
         return output
