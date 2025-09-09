@@ -276,6 +276,200 @@ class RSUBlock(nn.Module):
         
         return output
 
+class RSUdilatedBlock(nn.Module):
+    """
+    RSU-4F style block: U-shaped residual block using only dilated convolutions.
+
+    This variant replaces pooling/upsampling with dilated convolutions so that
+    all intermediate feature maps have the same spatial resolution as the input.
+
+    Dilation rates increase along the encoder path and decrease along the decoder
+    path. Dilation is safely capped at runtime based on the current input size to
+    avoid "kernel larger than input" runtime errors.
+
+    Parameters are analogous to RSUBlock. Only the internal convolutions differ
+    (no pooling/upsampling, use dilation instead).
+    """
+    def __init__(
+        self,
+        in_ch: int,
+        out_ch: int,
+        mid_ch: Optional[int],
+        depth: int = 4,
+        conv_op: Type[nn.Module] = nn.Conv2d,
+        kernel_size: Union[int, Tuple[int, ...], List[int]] = 3,
+        stride: Union[int, Tuple[int, ...], List[int]] = 1,
+        bias: bool = True,
+        nonlin: Optional[Type[nn.Module]] = nn.ReLU,
+        norm_op: Optional[Type[nn.Module]] = nn.BatchNorm2d,
+        norm_op_kwargs: Optional[dict] = None,
+        dropout_op: Optional[Type[nn.Module]] = None,
+        dropout_op_kwargs: Optional[dict] = None,
+        nonlin_kwargs: Optional[dict] = None,
+        nonlin_first: bool = False,
+    ):
+        super().__init__()
+        assert depth >= 2, "RSUdilatedBlock expects depth >= 2"
+        self.depth = depth
+        self.nonlin_first = nonlin_first
+
+        # Defaults
+        nonlin_kwargs = {} if nonlin_kwargs is None else nonlin_kwargs
+        norm_op_kwargs = {} if norm_op_kwargs is None else norm_op_kwargs
+        self.nonlin = nonlin(**nonlin_kwargs) if nonlin else nn.Identity()
+        self.dropout = dropout_op(**(dropout_op_kwargs or {})) if dropout_op else nn.Identity()
+
+        # Normalize args
+        ksize_list = maybe_convert_scalar_to_list(conv_op, kernel_size)
+        stride_list = maybe_convert_scalar_to_list(conv_op, stride)
+
+        # Padding for dilation=1 (will be recomputed per dilation at runtime)
+        base_padding = [k // 2 for k in ksize_list]
+
+        # Input conv can optionally downsample by provided stride (stage-level)
+        self.conv_in = conv_op(in_ch, out_ch, ksize_list, stride_list, padding=base_padding, bias=bias)
+        self.norm_in = norm_op(out_ch, **norm_op_kwargs) if norm_op else nn.Identity()
+
+        # Encoder path (increasing dilations)
+        self.encoders = nn.ModuleList()
+        self.enc_norms = nn.ModuleList()
+        for i in range(depth):
+            cin = out_ch if i == 0 else (mid_ch if mid_ch is not None else out_ch // 2)
+            cout = (mid_ch if mid_ch is not None else out_ch // 2)
+            self.encoders.append(
+                conv_op(cin, cout, ksize_list, 1, padding=base_padding, bias=bias)
+            )
+            self.enc_norms.append(norm_op(cout, **norm_op_kwargs) if norm_op else nn.Identity())
+
+        # Bottleneck (largest dilation)
+        self.bottom = conv_op((mid_ch if mid_ch is not None else out_ch // 2),
+                              (mid_ch if mid_ch is not None else out_ch // 2),
+                              ksize_list, 1, padding=base_padding, bias=bias)
+        self.norm_bottom = norm_op((mid_ch if mid_ch is not None else out_ch // 2), **norm_op_kwargs) if norm_op else nn.Identity()
+
+        # Decoder path (decreasing dilations)
+        self.decoders = nn.ModuleList()
+        self.dec_norms = nn.ModuleList()
+        for i in range(depth):
+            # Skip from encoder level depth-1-i
+            skip_ch = out_ch if i == depth - 1 else (mid_ch if mid_ch is not None else out_ch // 2)
+            in_dec_ch = (mid_ch if mid_ch is not None else out_ch // 2) + skip_ch
+            out_dec_ch = (mid_ch if i < depth - 1 else out_ch)
+            if mid_ch is None and i < depth - 1:
+                out_dec_ch = out_ch // 2
+            self.decoders.append(
+                conv_op(in_dec_ch, out_dec_ch, ksize_list, 1, padding=base_padding, bias=bias)
+            )
+            self.dec_norms.append(norm_op(out_dec_ch, **norm_op_kwargs) if norm_op else nn.Identity())
+
+        # Precompute base dilation schedule (will be capped at runtime)
+        # Encoder: 1, 2, 4, 8, ... ; Bottom: last; Decoder: reverse without the last
+        self.base_enc_dils = [1] + [2 ** i for i in range(1, depth)]
+        self.base_dec_dils = list(reversed(self.base_enc_dils[:-1]))  # len = depth-1
+
+        # Store kernel size for runtime padding/dilation adjustments
+        self._ksize_tuple = tuple(ksize_list)
+
+    @staticmethod
+    def _set_conv_dilation(conv: nn.Module, ksize: Tuple[int, ...], dil: int):
+        """Adjust dilation and padding on a conv to keep output size constant."""
+        if hasattr(conv, 'dilation'):
+            # Set dilation per spatial dim
+            dim = len(ksize)
+            conv.dilation = (dil,) * dim
+            # Padding to keep "same" spatial size
+            conv.padding = tuple((k // 2) * dil for k in ksize)
+
+    def _apply_block(self, conv, norm, nonlin, x):
+        x = conv(x)
+        # InstanceNorm safety on tiny maps
+        is_instancenorm = isinstance(norm, (nn.InstanceNorm2d, nn.InstanceNorm3d))
+        spatial_dims = x.shape[2:]
+        too_small_for_instancenorm = np.prod(spatial_dims) <= 1
+        if not isinstance(norm, nn.Identity) and not (is_instancenorm and too_small_for_instancenorm):
+            if self.nonlin_first:
+                x = nonlin(x)
+                x = norm(x)
+            else:
+                x = norm(x)
+                x = nonlin(x)
+        else:
+            x = nonlin(x)
+        return x
+
+    def _max_safe_dilation(self, spatial: Tuple[int, ...]) -> int:
+        """Compute maximum safe dilation so that effective kernel fits the input.
+
+        For a k-sized kernel and dilation d, effective size = (k-1)*d + 1 must be <= min_dim.
+        """
+        min_dim = int(min(spatial)) if len(spatial) > 0 else 1
+        # Use smallest kernel dim (they are usually equal)
+        k_min = min(self._ksize_tuple) if len(self._ksize_tuple) > 0 else 3
+        if k_min <= 1 or min_dim <= 1:
+            return 1
+        return max(1, (min_dim - 1) // (k_min - 1))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Entrance conv (may downsample per provided stride)
+        x_in = self._apply_block(self.conv_in, self.norm_in, self.nonlin, x)
+        x_in = self.dropout(x_in)
+
+        # Determine safe dilations for current input size
+        max_d = self._max_safe_dilation(tuple(x_in.shape[2:]))
+        enc_dils = [min(d, max_d) for d in self.base_enc_dils]
+        dec_dils = [min(d, max_d) for d in self.base_dec_dils]
+        bottom_dil = enc_dils[-1]
+
+        # Encoder with dilations, collect skips (all same spatial size)
+        skips = [x_in]
+        xi = x_in
+        for i, (enc, norm) in enumerate(zip(self.encoders, self.enc_norms)):
+            self._set_conv_dilation(enc, self._ksize_tuple, enc_dils[i])
+            xi = self._apply_block(enc, norm, self.nonlin, xi)
+            xi = self.dropout(xi)
+            skips.append(xi)
+
+        # Bottom with max dilation
+        self._set_conv_dilation(self.bottom, self._ksize_tuple, bottom_dil)
+        xb = self._apply_block(self.bottom, self.norm_bottom, self.nonlin, xi)
+        xb = self.dropout(xb)
+
+        # Decoder with decreasing dilations, concat with skips (no upsampling needed)
+        xu = xb
+        for i, (dec, norm) in enumerate(zip(self.decoders, self.dec_norms)):
+            # Match skip from encoder: reverse order, skip does not include x_in at index 0 when i=0? we added x_in as first
+            skip = skips[-(i + 2)]  # enc_feats[-(i+2)] style
+            xu = torch.cat([xu, skip], dim=1)
+            # Choose dilation for this decoder level
+            dil = dec_dils[i] if i < len(dec_dils) else 1
+            self._set_conv_dilation(dec, self._ksize_tuple, dil)
+            xu = self._apply_block(dec, norm, self.nonlin, xu)
+            xu = self.dropout(xu)
+
+        # Residual connection
+        # Ensure same spatial dims (should be by design); interpolate if minor mismatch
+        if xu.shape[2:] != x_in.shape[2:]:
+            mode = 'trilinear' if xu.dim() == 5 else 'bilinear'
+            xu = F.interpolate(xu, size=x_in.shape[2:], mode=mode, align_corners=False)
+        return xu + x_in
+
+    def compute_conv_feature_map_size(self, input_size: List[int]) -> int:
+        """Estimate feature map elements touched (proxy for VRAM) with constant spatial size."""
+        output = np.int64(0)
+        # after conv_in
+        output += np.prod([self.conv_in.out_channels, *input_size], dtype=np.int64)
+        # encoders
+        for enc in self.encoders:
+            output += np.prod([enc.out_channels, *input_size], dtype=np.int64)
+        # bottom
+        output += np.prod([self.bottom.out_channels, *input_size], dtype=np.int64)
+        # decoders (spatial size constant)
+        for dec in self.decoders:
+            output += np.prod([dec.out_channels, *input_size], dtype=np.int64)
+        return output
+
+
+
 
 class RSUEncoder(nn.Module):
     """
@@ -365,7 +559,7 @@ class RSUEncoder(nn.Module):
         self.nonlin_first = nonlin_first
         self.stages = nn.ModuleList()
         prev_ch = input_channels
-        for i in range(n_stages):
+        for i in range(n_stages-2):
             depth = self.depth_per_stage[i]
             mid_ch = features_per_stage[i] // 2
             self.stages.append(
@@ -385,6 +579,31 @@ class RSUEncoder(nn.Module):
                     dropout_op_kwargs=dropout_op_kwargs,
                     nonlin_kwargs=nonlin_kwargs,
                     pool=pool,
+                    nonlin_first=nonlin_first
+                )
+            )
+            prev_ch = features_per_stage[i]
+        # Last 2 stages are RSUdilatedBlock
+        
+        for i in range(n_stages-2, n_stages):
+            depth = self.depth_per_stage[i]
+            mid_ch = features_per_stage[i] // 2
+            self.stages.append(
+                RSUdilatedBlock(
+                    in_ch=prev_ch,
+                    out_ch=features_per_stage[i],
+                    mid_ch=mid_ch,
+                    depth=depth,
+                    conv_op=conv_op,
+                    kernel_size=kernel_sizes[i],
+                    stride=strides[i],
+                    bias=conv_bias,
+                    nonlin=self.blocks_nonlin,
+                    norm_op=norm_op,
+                    norm_op_kwargs=norm_op_kwargs,
+                    dropout_op=dropout_op,
+                    dropout_op_kwargs=dropout_op_kwargs,
+                    nonlin_kwargs=nonlin_kwargs,
                     nonlin_first=nonlin_first
                 )
             )
@@ -480,7 +699,27 @@ class RSUDecoder(nn.Module):
 
         features_per_stage = encoder.features_per_stage
         n_stages = len(features_per_stage)
-        for i in range(n_stages-1, 0, -1):
+        #first decoder stage is rsu dilated block
+        self.stages.append(
+            RSUdilatedBlock(
+                in_ch=features_per_stage[-1] + features_per_stage[-2],
+                out_ch=features_per_stage[-2],
+                mid_ch=features_per_stage[-2] // 2,
+                depth=encoder.depth_per_stage[-2],
+                conv_op=encoder.conv_op,
+                kernel_size=encoder.kernel_sizes[-2],
+                stride=1,
+                bias=encoder.bias,
+                nonlin=self.blocks_nonlin,
+                norm_op=encoder.norm_op,
+                norm_op_kwargs=encoder.norm_op_kwargs,
+                dropout_op=encoder.dropout_op,
+                dropout_op_kwargs=encoder.dropout_op_kwargs,
+                nonlin_kwargs=encoder.nonlin_kwargs,
+                nonlin_first=nonlin_first
+            )
+        )
+        for i in range(n_stages-2, 0, -1):
             self.stages.append(
                 RSUBlock(
                     in_ch = features_per_stage[i]+features_per_stage[i-1],
