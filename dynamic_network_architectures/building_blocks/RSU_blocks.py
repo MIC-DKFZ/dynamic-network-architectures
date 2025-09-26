@@ -21,7 +21,15 @@ class RSUBlock(nn.Module):
     It consists of an encoder path that downsamples the input, a bottleneck layer,
     and a decoder path that upsamples back to the original resolution with skip connections.
     A residual connection is added between the input and output.
-    
+
+    Notes
+    -----
+    - Internally downsamples/upsamples features via pooling and interpolation, but the
+        block output has the same spatial size as the input (residual connection).
+    - Pooling is skipped when spatial dimensions are too small ("> 1" check per axis).
+    - Normalization may be effectively skipped on extremely small feature maps by the
+        block internals to avoid numerical issues.
+
     Parameters
     ----------
     in_ch : int
@@ -189,8 +197,13 @@ class RSUBlock(nn.Module):
         Returns
         -------
         torch.Tensor
-            Output tensor of shape (batch_size, out_ch, *spatial_dims).
-            The spatial dimensions remain the same as the input.
+        Output tensor of shape "(batch_size, out_ch, *spatial_dims)" with the same
+        spatial size as the input.
+
+        Notes
+        -----
+        - Uses interpolation to align skip connections and maintain spatial size.
+        - Output adds a residual connection "(x + F(x))".
         """
         x_in = self._apply_block(self.conv_in, self.norm_in, self.nonlin, x)
         x_in = self.dropout(x_in)
@@ -236,6 +249,11 @@ class RSUBlock(nn.Module):
         -------
         int
             Number of parameters in the convolutional feature maps.
+
+    Notes
+    -----
+    This is a proxy used for memory/VRAM estimation and does not include parameters,
+    only the feature map element counts traversed by convolutions.
         """
         output = np.int64(0)
         
@@ -278,17 +296,55 @@ class RSUBlock(nn.Module):
 
 class RSUdilatedBlock(nn.Module):
     """
-    RSU-4F style block: U-shaped residual block using only dilated convolutions.
+    Residual U-shaped (RSU) dilated block (RSU-4F).
 
-    This variant replaces pooling/upsampling with dilated convolutions so that
-    all intermediate feature maps have the same spatial resolution as the input.
+    This block implements a mini U-Net that replaces pooling/upsampling with
+    dilated convolutions so that all intermediate feature maps preserve the
+    input spatial resolution. Dilation rates increase along the encoder path
+    and decrease along the decoder path. Dilation is capped at runtime based on
+    the current input size to avoid invalid effective kernel sizes.
 
-    Dilation rates increase along the encoder path and decrease along the decoder
-    path. Dilation is safely capped at runtime based on the current input size to
-    avoid "kernel larger than input" runtime errors.
+    Parameters
+    ----------
+    in_ch : int
+        Number of input channels.
+    out_ch : int
+        Number of output channels.
+    mid_ch : int, optional
+        Number of channels in the intermediate layers. If "None", defaults to
+        "out_ch // 2".
+    depth : int, default=4
+        Number of internal encoder/decoder levels inside the block.
+    conv_op : Type[nn.Module], default=nn.Conv2d
+        Convolution operator class to use (e.g., 2D or 3D variant).
+    kernel_size : int or tuple of int, default=3
+        Convolution kernel size for all internal convolutions.
+    stride : int or tuple of int, default=1
+        Stride applied by the input convolution only; internal layers use stride "1".
+    bias : bool, default=True
+        If "True", adds a learnable bias to the convolution layers.
+    nonlin : Type[nn.Module], optional, default=nn.ReLU
+        Nonlinearity module class to use.
+    norm_op : Type[nn.Module], optional, default=nn.BatchNorm2d
+        Normalization module class to use.
+    norm_op_kwargs : dict, optional
+        Keyword arguments forwarded to "norm_op".
+    dropout_op : Type[nn.Module], optional
+        Dropout module class to use.
+    dropout_op_kwargs : dict, optional
+        Keyword arguments forwarded to "dropout_op".
+    nonlin_kwargs : dict, optional
+        Keyword arguments forwarded to "nonlin".
+    nonlin_first : bool, default=False
+        If "True", apply nonlinearity before normalization in conv blocks. If "False",
+        apply normalization before nonlinearity.
 
-    Parameters are analogous to RSUBlock. Only the internal convolutions differ
-    (no pooling/upsampling, use dilation instead).
+    Notes
+    -----
+    - All intermediate feature maps keep the same spatial size as the input.
+    - Encoder dilations follow "[1, 2, 4, ...]" and the decoder mirrors this schedule.
+    - Dilation is capped so that "(k - 1) * dilation + 1 <= min(spatial_dim)" to prevent
+      "kernel larger than input" errors.
     """
     def __init__(
         self,
@@ -372,7 +428,18 @@ class RSUdilatedBlock(nn.Module):
 
     @staticmethod
     def _set_conv_dilation(conv: nn.Module, ksize: Tuple[int, ...], dil: int):
-        """Adjust dilation and padding on a conv to keep output size constant."""
+        """
+        Adjust dilation and padding on a convolution to keep spatial size constant.
+
+        Parameters
+        ----------
+        conv : nn.Module
+            Convolution layer whose dilation and padding will be adjusted.
+        ksize : tuple of int
+            Kernel size of the convolution per spatial dimension.
+        dil : int
+            Dilation factor to apply uniformly across spatial dimensions.
+        """
         if hasattr(conv, 'dilation'):
             # Set dilation per spatial dim
             dim = len(ksize)
@@ -381,6 +448,34 @@ class RSUdilatedBlock(nn.Module):
             conv.padding = tuple((k // 2) * dil for k in ksize)
 
     def _apply_block(self, conv, norm, nonlin, x):
+        """
+        Apply a convolutional block with normalization and nonlinearity.
+
+        Parameters
+        ----------
+        conv : nn.Module
+            Convolution layer.
+        norm : nn.Module
+            Normalization layer.
+        nonlin : nn.Module
+            Nonlinearity function.
+        x : torch.Tensor
+            Input tensor.
+
+        Returns
+        -------
+        torch.Tensor
+            Output tensor after applying convolution, normalization, and nonlinearity.
+
+        Notes
+        -----
+        The order of operations depends on "self.nonlin_first":
+        - If True: conv -> nonlin -> norm
+        - If False: conv -> norm -> nonlin
+
+        For InstanceNorm with small spatial dimensions ("prod(spatial_dims) <= 1"),
+        normalization is skipped to avoid numerical issues.
+        """
         x = conv(x)
         # InstanceNorm safety on tiny maps
         is_instancenorm = isinstance(norm, (nn.InstanceNorm2d, nn.InstanceNorm3d))
@@ -398,9 +493,21 @@ class RSUdilatedBlock(nn.Module):
         return x
 
     def _max_safe_dilation(self, spatial: Tuple[int, ...]) -> int:
-        """Compute maximum safe dilation so that effective kernel fits the input.
+        """
+        Compute maximum safe dilation so that the effective kernel fits the input.
 
-        For a k-sized kernel and dilation d, effective size = (k-1)*d + 1 must be <= min_dim.
+        For a k-sized kernel and dilation "d", the effective size is
+        "(k - 1) * d + 1" which must be "<= min(spatial)".
+
+        Parameters
+        ----------
+        spatial : tuple of int
+            Current spatial dimensions of the feature map.
+
+        Returns
+        -------
+        int
+            Maximum safe dilation value (at least 1).
         """
         min_dim = int(min(spatial)) if len(spatial) > 0 else 1
         # Use smallest kernel dim (they are usually equal)
@@ -410,6 +517,26 @@ class RSUdilatedBlock(nn.Module):
         return max(1, (min_dim - 1) // (k_min - 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the RSU-4F dilated block.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape "(batch_size, in_ch, *spatial_dims)".
+
+        Returns
+        -------
+        torch.Tensor
+            Output tensor of shape "(batch_size, out_ch, *spatial_dims)".
+            The spatial dimensions remain the same as the input.
+
+                Notes
+                -----
+                - Residual connection ensures the same spatial size as input.
+                - Dilation is capped per-batch to ensure the effective kernel fits the current
+                    feature map size.
+        """
         # Entrance conv (may downsample per provided stride)
         x_in = self._apply_block(self.conv_in, self.norm_in, self.nonlin, x)
         x_in = self.dropout(x_in)
@@ -454,7 +581,24 @@ class RSUdilatedBlock(nn.Module):
         return xu + x_in
 
     def compute_conv_feature_map_size(self, input_size: List[int]) -> int:
-        """Estimate feature map elements touched (proxy for VRAM) with constant spatial size."""
+        """
+        Compute the number of parameters in the convolutional feature maps.
+
+        Parameters
+        ----------
+        input_size : List[int]
+            Spatial dimensions of the input tensor (excluding batch and channel dimensions).
+
+        Returns
+        -------
+        int
+            Number of parameters in the convolutional feature maps.
+
+    Notes
+    -----
+    Since this block preserves spatial dimensions internally (no pooling), the
+    feature map sizes are constant across layers and this proxy reflects that.
+        """
         output = np.int64(0)
         # after conv_in
         output += np.prod([self.conv_in.out_channels, *input_size], dtype=np.int64)
@@ -477,7 +621,6 @@ class RSUEncoder(nn.Module):
     
     This encoder creates a series of RSU blocks that progressively reduce the spatial
     dimensions of the input while increasing the number of channels.
-    
     Parameters
     ----------
     input_channels : int
@@ -518,6 +661,14 @@ class RSUEncoder(nn.Module):
         Depth of each RSU block. If None, all blocks use depth=4.
     blocks_nonlin : Optional[Type[nn.Module]], default=None
         Specific nonlinearity for RSU blocks. If None, uses the same as nonlin.
+    
+    Notes
+    -----
+    - By default, early stages use pooling RSU blocks while the last stages can be
+        configured to use dilated RSU blocks to preserve spatial resolution.
+    - "strides" per stage control downsampling at the stage input.
+    - When "return_skips=True", the forward method returns all stage outputs for
+        use in the decoder.
     """
     def __init__(
         self,
@@ -625,6 +776,12 @@ class RSUEncoder(nn.Module):
                 List of feature maps from each stage, for use in a decoder with skip connections.
             Otherwise:
                 Output tensor from the final stage.
+
+        Notes
+        -----
+        - The list of feature maps is ordered from shallow (early stage) to deep (bottleneck).
+        - Each stage may apply a stride at the entrance; additional downsampling may happen
+            inside RSU blocks that use pooling.
         """
         skips = []
         for stage in self.stages:
@@ -647,6 +804,11 @@ class RSUEncoder(nn.Module):
         -------
         int
             Number of parameters in the convolutional feature maps.
+
+    Notes
+    -----
+    This estimate aggregates the feature map sizes of all RSU stages and accounts for
+    per-stage strides. It is used as a proxy for VRAM estimation.
         """
         output = np.int64(0)
         for s in range(len(self.stages)):
@@ -667,6 +829,12 @@ class RSUDecoder(nn.Module):
     This decoder creates a series of RSU blocks that progressively increase the spatial
     dimensions of the input while decreasing the number of channels. It uses skip
     connections from a corresponding encoder.
+
+        Notes
+        -----
+        - The first decoder stage can use a dilated RSU block to better preserve spatial
+            detail at higher resolutions.
+        - One segmentation head per decoder stage enables deep supervision.
     
     Parameters
     ----------
@@ -761,6 +929,13 @@ class RSUDecoder(nn.Module):
                 Final output tensor with shape (batch_size, num_classes, *spatial_dims).
             Otherwise:
                 List of output tensors at different resolutions for deep supervision.
+
+                Notes
+                -----
+                - Each decoder stage upsamples to match its corresponding encoder skip size,
+                    concatenates, and applies an RSU block.
+                - The outputs list is reversed so that index 0 corresponds to the highest
+                    resolution output.
         """
         x = skips[-1]
         outputs = []
@@ -793,6 +968,11 @@ class RSUDecoder(nn.Module):
         -------
         int
             Number of parameters in the convolutional feature maps.
+
+    Notes
+    -----
+    This aggregates decoder RSU block contributions, skip concatenations, and
+    segmentation heads (for deep supervision or the final output).
         """
         skip_sizes = []
         for s in range(len(self.encoder.strides) - 1):

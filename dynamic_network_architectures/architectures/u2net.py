@@ -13,65 +13,65 @@ __email__ = ["stefano.petraccini@studio.unibo.it"]
 
 class U2Net(AbstractDynamicNetworkArchitectures):
     """
-    U2Net architecture: nested u-structure for salient object detection.
+    U2Net architecture: nested U-structure with RSU blocks.
 
     Parameters
     ----------
     input_channels : int
-        Number of input channels (e.g., 1 for grayscale, 3 for RGB).
+        Number of input channels (for example, 1 for grayscale, 3 for RGB).
     n_stages : int
-        Number of stages in the encoder.
+        Number of encoder/decoder stages.
     features_per_stage : Union[int, List[int], Tuple[int, ...]]
-        Number of features (channels) per stage. Can be a single integer for uniform features or
-        a list/tuple of integers for different features per stage.
+        Number of output channels per stage. May be a single integer (uniform across
+        stages) or a list/tuple providing one value per stage.
     conv_op : Type[_ConvNd]
-        Type of convolution operation to use (e.g., nn.Conv2d, nn.Conv3d).
+        Convolution operator to use (for example, "nn.Conv2d" or "nn.Conv3d").
     kernel_sizes : Union[int, List[int], Tuple[int, ...]]
-        Kernel sizes to use for the convolutional layers.
+        Kernel sizes for each stage (single value or per-stage list/tuple).
     strides : Union[int, List[int], Tuple[int, ...]]
-        Strides for the convolutional layers.
-    n_conv_per_stage : Union[int, List[int], Tuple[int, ...]]
-        Number of convolutional layers per stage. Can be a single integer for uniform number of convolutions or
-        a list/tuple of integers for different numbers of convolutions per stage.
+        Strides for each stage (single value or per-stage list/tuple).
     num_classes : int
-        Number of output classes for the segmentation task.
+        Number of output classes for the final segmentation head.
     conv_bias : bool, default=False
-        If True, adds a learnable bias to the convolution layers.
+        If "True", add a learnable bias to convolution layers.
     norm_op : Union[None, Type[nn.Module]], default=None
-        Type of normalization to use (e.g., nn.BatchNorm2d, nn.InstanceNorm2d).
-        If None, no normalization is applied.
+        Normalization layer class to use. If "None", no normalization is applied.
     norm_op_kwargs : dict, default=None
-        Additional arguments for the normalization operation.
+        Keyword arguments for "norm_op".
     dropout_op : Union[None, Type[_DropoutNd]], default=None
-        Type of dropout to use (e.g., nn.Dropout2d, nn.Dropout3d).
-        If None, no dropout is applied.
+        Dropout layer class to use. If "None", dropout is not applied.
     dropout_op_kwargs : dict, default=None
-        Additional arguments for the dropout operation.
+        Keyword arguments for "dropout_op".
     nonlin : Union[None, Type[torch.nn.Module]], default=None
-        Type of nonlinearity to use (e.g., nn.ReLU, nn.LeakyReLU).
-        If None, no nonlinearity is applied.
+        Nonlinearity layer class to use. If "None", no nonlinearity is applied.
     nonlin_kwargs : dict, default=None
-        Additional arguments for the nonlinearity.
+        Keyword arguments for "nonlin".
     blocks_nonlin : Union[None, Type[torch.nn.Module]], default=None
-        Specific nonlinearity for RSU blocks. If None, uses the same as nonlin.
+        Specific nonlinearity for RSU blocks. If "None", falls back to "nonlin".
     blocks_nonlin_kwargs : dict, default=None
-        Additional arguments for the RSU block nonlinearity.
+        Keyword arguments for the RSU block nonlinearity.
     deep_supervision : bool, default=False
-        If True, returns intermediate outputs for deep supervision during training.
+        If "True", return intermediate outputs for deep supervision.
     return_skips : bool, default=True
-        If True, returns intermediate feature maps (skips) from the encoder for U-Net-like architectures.
+        If "True", return intermediate feature maps (skips) from the encoder.
     nonlin_first : bool, default=False
-        If True, applies nonlinearity before normalization.
+        If "True", apply nonlinearity before normalization in conv blocks.
     pool : str, default="max"
-        Type of pooling to use ("max" or "avg").
+        Pooling type used in pooling RSU blocks (""max"" or ""avg"").
     depth_per_stage : Union[int, List[int], Tuple[int, ...]], default=None
-        Depth of each RSU block. If None, all blocks use the default depth.
-    
+        Depth of each RSU block. If "None", a default depth is used per stage.
+
+    Notes
+    -----
+    - This implementation composes an "RSUEncoder" and "RSUDecoder". Some stages
+      may use dilated RSU blocks (RSU-4F) to preserve spatial resolution.
+    - Outputs are logits; apply a nonlinearity (for example, Sigmoid/Softmax) outside if needed.
+
     References
     ----------
     .. [1] Qin, X., Zhang, Z., Huang, C., Dehghan, M., Zaiane, O.R., & Jagersand, M. (2020).
-        U2-Net: Going Deeper with Nested U-Structure for Salient Object Detection.
-        Pattern Recognition, 106, 107404.
+       U2-Net: Going Deeper with Nested U-Structure for Salient Object Detection.
+       Pattern Recognition, 106, 107404.
     """
     def __init__(
         self,
@@ -130,15 +130,56 @@ class U2Net(AbstractDynamicNetworkArchitectures):
         )
 
     def forward(self, x):
-        skips = self.encoder(x)
-        return self.decoder(skips)
+                """
+                Forward pass of U2Net.
+
+                Parameters
+                ----------
+                x : torch.Tensor
+                        Input tensor of shape "(batch_size, input_channels, *spatial_dims)".
+
+                Returns
+                -------
+                torch.Tensor or List[torch.Tensor]
+                        - If "deep_supervision" is False: the final segmentation logits with shape
+                            "(batch_size, num_classes, *spatial_dims)".
+                        - If "deep_supervision" is True: a list of segmentation logits at different
+                            resolutions (highest resolution first).
+
+                Notes
+                -----
+                Outputs are raw logits. Apply activation (for example, Sigmoid/Softmax) depending
+                on your loss or evaluation setup.
+                """
+                skips = self.encoder(x)
+                return self.decoder(skips)
 
     def compute_conv_feature_map_size(self, input_size):
+        """
+        Estimate the total convolutional feature map size traversed by the model.
+
+        Parameters
+        ----------
+        input_size : List[int] or Tuple[int, ...]
+            Spatial dimensions of the input (exclude batch and channel), for example "(H, W)"
+            or "(D, H, W)".
+
+        Returns
+        -------
+        int
+            Proxy measure of feature map elements processed by convolutions across encoder and decoder.
+
+        Notes
+        -----
+        - This is used as an approximate VRAM indicator; it is not the number of learnable parameters.
+        - Pass only spatial dims. For example, use "(H, W)" not "(B, C, H, W)".
+        """
         assert len(input_size) == convert_conv_op_to_dim(self.encoder.conv_op), (
             "just give the image size without color/feature channels or "
             "batch channel. Do not give input_size=(b, c, x, y(, z)). "
             "Give input_size=(x, y(, z))!"
         )
-        return self.encoder.compute_conv_feature_map_size(input_size) + self.decoder.compute_conv_feature_map_size(
-            input_size
+        return (
+            self.encoder.compute_conv_feature_map_size(input_size)
+            + self.decoder.compute_conv_feature_map_size(input_size)
         )
