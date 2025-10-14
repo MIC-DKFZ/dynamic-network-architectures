@@ -70,7 +70,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
         consists of simple patch_embedding, a EVA ViT encoder with a few adatptations and a simple patch decoder.
         """
         assert input_shape is not None
-        assert len(input_shape) == 3, "Currently on ly 3d is supported"
+        assert len(input_shape) == 3, "Currently only 3d is supported"
         assert all([j % i == 0 for i, j in zip(patch_embed_size, input_shape)])
 
         super().__init__()
