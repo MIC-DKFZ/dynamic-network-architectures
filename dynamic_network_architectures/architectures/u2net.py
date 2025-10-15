@@ -6,7 +6,7 @@ from torch.nn.modules.dropout import _DropoutNd
 
 from dynamic_network_architectures.architectures.abstract_arch import AbstractDynamicNetworkArchitectures
 from dynamic_network_architectures.building_blocks.RSU_blocks import RSUEncoder, RSUDecoder
-from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim
+from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim, maybe_convert_scalar_to_list
 
 __author__ = ["Stefano Petraccini"]
 __email__ = ["stefano.petraccini@studio.unibo.it"]
@@ -101,9 +101,22 @@ class U2Net(AbstractDynamicNetworkArchitectures):
         # If we don't have a specific nonlinearity for blocks, use the default nonlin
         if blocks_nonlin is None:
             blocks_nonlin = nonlin
-            blocks_nonlin_kwargs = nonlin_kwargs 
+            blocks_nonlin_kwargs = nonlin_kwargs
+
+        if isinstance(kernel_sizes, int):
+            kernel_sizes = [kernel_sizes] * n_stages
+
+        if isinstance(strides, int):
+            strides = [strides] * n_stages
+        
+        if isinstance(features_per_stage, int):
+            features_per_stage = [features_per_stage] * n_stages
+
+        if isinstance(depth_per_stage, int):
+            depth_per_stage = [depth_per_stage] * n_stages
 
         self.deep_supervision = deep_supervision
+        
         self.encoder = RSUEncoder(
             input_channels,
             n_stages,
@@ -183,3 +196,50 @@ class U2Net(AbstractDynamicNetworkArchitectures):
             self.encoder.compute_conv_feature_map_size(input_size)
             + self.decoder.compute_conv_feature_map_size(input_size)
         )
+
+if __name__ == "__main__":
+    # 3D example
+    data = torch.rand((1, 3, 128, 128, 128))
+
+    model = U2Net(
+        input_channels=3,
+        n_stages=6,
+        features_per_stage=(32, 64, 128, 256, 320, 320),
+        conv_op=nn.Conv3d,
+        kernel_sizes=3,
+        strides=([1, 2, 2], [2, 2, 2], [2, 2, 2], [2, 2, 2], [2, 2, 2], [2, 2, 2]),
+        num_classes=4,
+        conv_bias=False,
+        norm_op=nn.InstanceNorm3d,
+        norm_op_kwargs={"eps": 1e-5, "affine": True},
+        nonlin=nn.ReLU,
+        nonlin_kwargs={"inplace": True},
+        deep_supervision=True,
+        depth_per_stage=7
+    )
+
+    print ('3D works!')
+    print(model.compute_conv_feature_map_size(data.shape[2:]))
+
+    # 2D example
+    data = torch.rand((1, 2, 512, 512))
+
+    model = U2Net(
+        input_channels=2,
+        n_stages=8,
+        features_per_stage=(32, 64, 128, 256, 512, 512, 512, 512),
+        conv_op=nn.Conv2d,
+        kernel_sizes=[[3, 3], [3, 3], [3, 3], [3, 3], [3, 3], [3, 3], [3, 3], [3, 3]],
+        strides=(2, 2, 2, 2, 2, 2, 2, 2),
+        num_classes=4,
+        conv_bias=False,
+        norm_op=nn.BatchNorm2d,
+        norm_op_kwargs={},
+        nonlin=nn.ReLU,
+        nonlin_kwargs={"inplace": True},
+        deep_supervision=True,
+        depth_per_stage=[4,4,4,4,4,4,4,4]
+    )
+
+    print ('2D works!')
+    print(model.compute_conv_feature_map_size(data.shape[2:]))

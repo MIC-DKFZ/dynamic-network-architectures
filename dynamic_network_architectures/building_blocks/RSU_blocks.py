@@ -4,11 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Union, List, Tuple, Type, Optional
 
-from dynamic_network_architectures.building_blocks.helper import (
-    maybe_convert_scalar_to_list,
-    get_matching_pool_op,
-    convert_conv_op_to_dim,
-)
+from dynamic_network_architectures.building_blocks.helper import ( maybe_convert_scalar_to_list, get_matching_pool_op )
 
 __author__ = ["Stefano Petraccini"]
 __email__ = ["stefano.petraccini@studio.unibo.it"]
@@ -92,9 +88,9 @@ class RSUBlock(nn.Module):
         self.decoders = nn.ModuleList()
 
         # Here we define the dimensions based on the conv_op type
-        #dim = convert_conv_op_to_dim(conv_op)
-        kernel_size = maybe_convert_scalar_to_list(conv_op, kernel_size)
-        self.strides = maybe_convert_scalar_to_list(conv_op, stride)
+        # dim = convert_conv_op_to_dim(conv_op)
+        # kernel_size = maybe_convert_scalar_to_list(conv_op, kernel_size)
+        # self.strides = maybe_convert_scalar_to_list(conv_op, stride)
         padding = [k // 2 for k in kernel_size]
 
         # Activation and dropout defaults
@@ -250,10 +246,10 @@ class RSUBlock(nn.Module):
         int
             Number of parameters in the convolutional feature maps.
 
-    Notes
-    -----
-    This is a proxy used for memory/VRAM estimation and does not include parameters,
-    only the feature map element counts traversed by convolutions.
+        Notes
+        -----
+        This is a proxy used for memory/VRAM estimation and does not include parameters,
+        only the feature map element counts traversed by convolutions.
         """
         output = np.int64(0)
         
@@ -594,10 +590,10 @@ class RSUdilatedBlock(nn.Module):
         int
             Number of parameters in the convolutional feature maps.
 
-    Notes
-    -----
-    Since this block preserves spatial dimensions internally (no pooling), the
-    feature map sizes are constant across layers and this proxy reflects that.
+        Notes
+        -----
+            Since this block preserves spatial dimensions internally (no pooling), the
+            feature map sizes are constant across layers and this proxy reflects that.
         """
         output = np.int64(0)
         # after conv_in
@@ -720,8 +716,8 @@ class RSUEncoder(nn.Module):
                     mid_ch=mid_ch,
                     depth=depth,
                     conv_op=conv_op,
-                    kernel_size=kernel_sizes[i],
-                    stride=strides[i],
+                    kernel_size=maybe_convert_scalar_to_list(conv_op, kernel_sizes[i]),
+                    stride=maybe_convert_scalar_to_list(conv_op, strides[i]),
                     bias=conv_bias,
                     nonlin=self.blocks_nonlin,
                     norm_op=norm_op,
@@ -746,8 +742,8 @@ class RSUEncoder(nn.Module):
                     mid_ch=mid_ch,
                     depth=depth,
                     conv_op=conv_op,
-                    kernel_size=kernel_sizes[i],
-                    stride=strides[i],
+                    kernel_size=maybe_convert_scalar_to_list(conv_op, kernel_sizes[i]),
+                    stride=maybe_convert_scalar_to_list(conv_op, strides[i]),
                     bias=conv_bias,
                     nonlin=self.blocks_nonlin,
                     norm_op=norm_op,
@@ -818,7 +814,7 @@ class RSUEncoder(nn.Module):
                         output += self.stages[s][-1].compute_conv_feature_map_size(input_size)
             else:
                 output += self.stages[s].compute_conv_feature_map_size(input_size)
-            input_size = [i // j for i, j in zip(input_size, self.strides[s])]
+            input_size = [i // j for i, j in zip(input_size, maybe_convert_scalar_to_list(self.conv_op, self.strides[s]))]
         return output
 
 
@@ -895,7 +891,7 @@ class RSUDecoder(nn.Module):
                     mid_ch = features_per_stage[i-1]//2,
                     depth = encoder.depth_per_stage[i-1],
                     conv_op = encoder.conv_op,
-                    kernel_size = encoder.kernel_sizes[i-1],
+                    kernel_size = maybe_convert_scalar_to_list(encoder.conv_op, encoder.kernel_sizes[i-1]),
                     stride = 1,
                     bias = encoder.bias,
                     nonlin = self.blocks_nonlin,
@@ -976,7 +972,7 @@ class RSUDecoder(nn.Module):
         """
         skip_sizes = []
         for s in range(len(self.encoder.strides) - 1):
-            skip_sizes.append([i // j for i, j in zip(input_size, self.encoder.strides[s])])
+            skip_sizes.append([i // j for i, j in zip(input_size, maybe_convert_scalar_to_list(self.encoder.conv_op, self.encoder.strides[s]))])
             input_size = skip_sizes[-1]
         assert len(skip_sizes) == len(self.stages)
         output = np.int64(0)
