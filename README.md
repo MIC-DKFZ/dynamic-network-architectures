@@ -14,6 +14,8 @@ In contrast to the original [VGG](https://arxiv.org/pdf/1409.1556.pdf) implement
 ### U-Net
 For the [U-Net](https://arxiv.org/pdf/1505.04597.pdf) a plain convolutional encoder as well as a residual encoder are available. 
 
+### U $^2$-Net
+The [$U^2$-Net] (https://arxiv.org/pdf/2005.09007) is implemented, using RSU (Residual U-Block) modules, adapted to medical imaging.
 # Acknowledgements
 
 <p align="left">
