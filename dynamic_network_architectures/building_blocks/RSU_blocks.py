@@ -44,17 +44,17 @@ class RSUBlock(nn.Module):
         Stride of the convolution.
     bias : bool, default=True
         If True, adds a learnable bias to the convolution layers.
-    nonlin : Type[nn.Module], optional, default=nn.ReLU
+    nonlin : Optional[Type[nn.Module]], default=nn.ReLU
         Type of nonlinearity to use.
-    norm_op : Type[nn.Module], optional, default=nn.BatchNorm2d
+    norm_op : Optional[Type[nn.Module]], default=nn.BatchNorm2d
         Type of normalization to use.
-    norm_op_kwargs : dict, optional
+    norm_op_kwargs : Optional[dict]
         Additional arguments for the normalization operation.
-    dropout_op : Type[nn.Module], optional
+    dropout_op : Optional[Type[nn.Module]]
         Type of dropout to use.
-    dropout_op_kwargs : dict, optional
+    dropout_op_kwargs : Optional[dict]
         Additional arguments for the dropout operation.
-    nonlin_kwargs : dict, optional
+    nonlin_kwargs : Optional[dict]
         Additional arguments for the nonlinearity.
     pool : str, default="max"
         Type of pooling to use ("max" or "avg").
@@ -527,11 +527,11 @@ class RSUdilatedBlock(nn.Module):
             Output tensor of shape "(batch_size, out_ch, *spatial_dims)".
             The spatial dimensions remain the same as the input.
 
-                Notes
-                -----
-                - Residual connection ensures the same spatial size as input.
-                - Dilation is capped per-batch to ensure the effective kernel fits the current
-                    feature map size.
+        Notes
+        -----
+        - Residual connection ensures the same spatial size as input.
+        - Dilation is capped per-batch to ensure the effective kernel fits the current
+            feature map size.
         """
         # Entrance conv (may downsample per provided stride)
         x_in = self._apply_block(self.conv_in, self.norm_in, self.nonlin, x)
@@ -617,6 +617,7 @@ class RSUEncoder(nn.Module):
     
     This encoder creates a series of RSU blocks that progressively reduce the spatial
     dimensions of the input while increasing the number of channels.
+    
     Parameters
     ----------
     input_channels : int
@@ -631,8 +632,6 @@ class RSUEncoder(nn.Module):
         Kernel sizes for each stage.
     strides : List[Union[int, Tuple[int, ...], List[int]]]
         Strides for each stage.
-    n_conv_per_stage : Union[int, List[int], Tuple[int, ...]]
-        Number of convolutions per stage.
     conv_bias : bool
         If True, adds a learnable bias to the convolution layers.
     norm_op : Optional[Type[nn.Module]]
@@ -660,11 +659,11 @@ class RSUEncoder(nn.Module):
     
     Notes
     -----
-    - By default, early stages use pooling RSU blocks while the last stages can be
-        configured to use dilated RSU blocks to preserve spatial resolution.
+    - By default, early stages use pooling RSU blocks while the last 2 stages use
+      dilated RSU blocks to preserve spatial resolution.
     - "strides" per stage control downsampling at the stage input.
     - When "return_skips=True", the forward method returns all stage outputs for
-        use in the decoder.
+      use in the decoder.
     """
     def __init__(
         self,
@@ -801,10 +800,10 @@ class RSUEncoder(nn.Module):
         int
             Number of parameters in the convolutional feature maps.
 
-    Notes
-    -----
-    This estimate aggregates the feature map sizes of all RSU stages and accounts for
-    per-stage strides. It is used as a proxy for VRAM estimation.
+        Notes
+        -----
+        This estimate aggregates the feature map sizes of all RSU stages and accounts for
+        per-stage strides. It is used as a proxy for VRAM estimation.
         """
         output = np.int64(0)
         for s in range(len(self.stages)):
@@ -826,12 +825,6 @@ class RSUDecoder(nn.Module):
     dimensions of the input while decreasing the number of channels. It uses skip
     connections from a corresponding encoder.
 
-        Notes
-        -----
-        - The first decoder stage can use a dilated RSU block to better preserve spatial
-            detail at higher resolutions.
-        - One segmentation head per decoder stage enables deep supervision.
-    
     Parameters
     ----------
     encoder : RSUEncoder
@@ -844,6 +837,12 @@ class RSUDecoder(nn.Module):
         Specific nonlinearity for RSU blocks. If None, uses the same as in the encoder.
     nonlin_first : bool, default=False
         If True, applies nonlinearity before normalization.
+
+    Notes
+    -----
+    - The first decoder stage uses a dilated RSU block to better preserve spatial
+      detail at higher resolutions.
+    - One segmentation head per decoder stage enables deep supervision.
     """
     def __init__(
         self,
@@ -926,12 +925,12 @@ class RSUDecoder(nn.Module):
             Otherwise:
                 List of output tensors at different resolutions for deep supervision.
 
-                Notes
-                -----
-                - Each decoder stage upsamples to match its corresponding encoder skip size,
-                    concatenates, and applies an RSU block.
-                - The outputs list is reversed so that index 0 corresponds to the highest
-                    resolution output.
+        Notes
+        -----
+        - Each decoder stage upsamples to match its corresponding encoder skip size,
+          concatenates, and applies an RSU block.
+        - The outputs list is reversed so that index 0 corresponds to the highest
+          resolution output.
         """
         x = skips[-1]
         outputs = []
@@ -965,10 +964,10 @@ class RSUDecoder(nn.Module):
         int
             Number of parameters in the convolutional feature maps.
 
-    Notes
-    -----
-    This aggregates decoder RSU block contributions, skip concatenations, and
-    segmentation heads (for deep supervision or the final output).
+        Notes
+        -----
+        This aggregates decoder RSU block contributions, skip concatenations, and
+        segmentation heads (for deep supervision or the final output).
         """
         skip_sizes = []
         for s in range(len(self.encoder.strides) - 1):

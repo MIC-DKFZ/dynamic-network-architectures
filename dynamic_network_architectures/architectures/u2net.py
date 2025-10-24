@@ -143,29 +143,29 @@ class U2Net(AbstractDynamicNetworkArchitectures):
         )
 
     def forward(self, x):
-                """
-                Forward pass of U2Net.
+        """
+        Forward pass of U2Net.
 
-                Parameters
-                ----------
-                x : torch.Tensor
-                        Input tensor of shape "(batch_size, input_channels, *spatial_dims)".
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape "(batch_size, input_channels, *spatial_dims)".
 
-                Returns
-                -------
-                torch.Tensor or List[torch.Tensor]
-                        - If "deep_supervision" is False: the final segmentation logits with shape
-                            "(batch_size, num_classes, *spatial_dims)".
-                        - If "deep_supervision" is True: a list of segmentation logits at different
-                            resolutions (highest resolution first).
+        Returns
+        -------
+        torch.Tensor or List[torch.Tensor]
+            - If "deep_supervision" is False: the final segmentation logits with shape
+              "(batch_size, num_classes, *spatial_dims)".
+            - If "deep_supervision" is True: a list of segmentation logits at different
+              resolutions (highest resolution first).
 
-                Notes
-                -----
-                Outputs are raw logits. Apply activation (for example, Sigmoid/Softmax) depending
-                on your loss or evaluation setup.
-                """
-                skips = self.encoder(x)
-                return self.decoder(skips)
+        Notes
+        -----
+        Outputs are raw logits. Apply activation (for example, Sigmoid/Softmax) depending
+        on your loss or evaluation setup.
+        """
+        skips = self.encoder(x)
+        return self.decoder(skips)
 
     def compute_conv_feature_map_size(self, input_size):
         """
