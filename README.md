@@ -15,7 +15,7 @@ In contrast to the original [VGG](https://arxiv.org/pdf/1409.1556.pdf) implement
 For the [U-Net](https://arxiv.org/pdf/1505.04597.pdf) a plain convolutional encoder as well as a residual encoder are available. 
 
 ### U $^2$-Net
-The [$U^2$-Net] (https://arxiv.org/pdf/2005.09007.pdf) is implemented, using RSU (Residual U) blocks.
+The [U2Net](https://arxiv.org/pdf/2005.09007.pdf) is implemented, using RSU (Residual U) blocks. Please refer to the U2Net_planner folder in the [nnUNet](https://github.com/MIC-DKFZ/nnUNet) repository for more exhaustive documentation.
 
 # Acknowledgements
 
