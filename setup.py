@@ -7,7 +7,8 @@ setup(
     description="none",
     author="Fabian Isensee",
     author_email="f.isensee@dkfz.de",
-    license="private",
+    license="Apache-2.0",
+    license_files=["LICENSE"],
     install_requires=[
         "torch>=1.6.0a",
         "numpy",
