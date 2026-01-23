@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dynamic_network_architectures"
-version = "0.4.2"
+version = "0.4.3"
 description = "none"
 authors = [
     { name = "Fabian Isensee", email = "f.isensee@dkfz.de" }
