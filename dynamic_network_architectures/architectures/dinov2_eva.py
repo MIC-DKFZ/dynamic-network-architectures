@@ -372,7 +372,7 @@ class Eva(nn.Module):
         self.cls_embed = class_token and self.reg_token is None
 
         self.pos_embed = nn.Parameter(
-            torch.zeros(1, num_patches + self.num_prefix_tokens, embed_dim)) if use_abs_pos_emb else None
+            torch.zeros(1, num_patches + self.num_class_tokens, embed_dim)) if use_abs_pos_emb else None
         self.pos_drop = nn.Dropout(p=pos_drop_rate)
 
         if use_rot_pos_emb:
