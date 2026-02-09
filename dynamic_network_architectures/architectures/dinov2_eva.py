@@ -583,7 +583,7 @@ class Eva(nn.Module):
     def prepare_tokens_with_masks(self, x, masks=None):
         b, nc, d, w, h = x.shape
         x = self.down_projection(x)
-        x = rearrange(x, 'b c w h d -> b (w h d) c')
+        x = rearrange(x, 'b c w h d -> b (w h d) c').contiguous()
 
         if masks is not None:
             x = torch.where(masks.unsqueeze(-1), self.mask_token.to(x.dtype).unsqueeze(0), x).squeeze(0)
@@ -1070,3 +1070,27 @@ class Eva_rope_pos_embed_fix(Eva):
         x = self.pos_drop(x)
 
         return x, rot_pos_embed
+    
+
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.manual_seed(0)
+
+    model = Eva(
+        input_channels=1,
+        global_crops_size=(96, 96, 96),
+        local_crops_size=(48, 48, 48),
+        embed_dim=864,
+        patch_size=(8, 8, 8),
+        depth=24,
+        num_heads=16,
+        qkv_fused=False,
+    ).to(device)
+    model.eval()
+
+    x = torch.randn(2, 1, 96, 96, 96, device=device)
+    with torch.no_grad():
+        out = model(x)
+
+    print("Output keys:", list(out.keys()))
+    print("Patch token shape:", out["x_norm_patchtokens"].shape)
