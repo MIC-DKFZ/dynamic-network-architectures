@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import math
 from typing import Tuple, Callable, Optional, List
 
@@ -344,6 +345,7 @@ class Eva(nn.Module):
         """
         super().__init__()
 
+        self.input_channels = input_channels
         self.patch_size = [patch_size] * 3 if isinstance(patch_size, int) else patch_size
         self.global_crops_size = [global_crops_size] * 3 if isinstance(global_crops_size, int) else global_crops_size
         self.local_crops_size = [local_crops_size] * 3 if isinstance(local_crops_size, int) else local_crops_size
@@ -619,6 +621,68 @@ class Eva(nn.Module):
 
     def forward(self, x, masks=None, is_training=True):
         return self.forward_features_list(x, masks)
+    
+    def load_pretrained_weights(self, state_dict, backbone_only=False, unchunk=False):
+        if isinstance(state_dict, str):
+            state_dict = torch.load(state_dict)['teacher']
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                new_key = k.replace("backbone.", "")  # Strip 'backbone.' prefix
+                if self.input_channels != 1 and new_key == "down_projection.proj.weight":
+                    v = v.repeat(1, self.input_channels, 1, 1, 1) / self.input_channels
+                new_state_dict[new_key] = v
+            if backbone_only:
+                new_state_dict = {k: v for k, v in new_state_dict.items() if not k.startswith("dino_head.")}
+            state_dict = new_state_dict
+
+        if unchunk:
+            state_dict = self.unchunk_state_dict(state_dict)
+        self.load_state_dict(state_dict)
+
+    def unchunk_state_dict(self, state_dict):
+        """
+        Convert a state_dict from EvaWithChunking (nested blocks)
+        to Eva (flat blocks).
+        """
+        if not any([key.startswith("blocks.0.0") for key in state_dict.keys()]):
+            return state_dict
+        
+        new_state_dict = OrderedDict()
+        for key, val in state_dict.items():
+            if key.startswith("blocks."):
+                parts = key.split(".")
+                # e.g. "blocks.0.1.attn.qkv.weight"
+                # parts[1] = chunk idx, parts[2] = inner idx
+                if parts[2].isdigit():
+                    chunk_idx = int(parts[1])
+                    inner_idx = int(parts[2])
+                    # compute new flat index
+                    flat_idx = chunk_idx * 9999 + inner_idx  # temporary large stride
+                    # rewrite key
+                    new_key = ".".join(["blocks", str(flat_idx)] + parts[3:])
+                    new_state_dict[new_key] = val
+                else:
+                    # already a normal block key (no extra index)
+                    new_state_dict[key] = val
+            else:
+                new_state_dict[key] = val
+
+        # Fix flat indices back to consecutive 0..N
+        # because above we used a stride
+        mapping = {old: new for new, old in enumerate(sorted(set(
+            int(k.split(".")[1]) for k in new_state_dict if k.startswith("blocks.")
+        )))}
+        final_state_dict = OrderedDict()
+        for key, val in new_state_dict.items():
+            if key.startswith("blocks."):
+                parts = key.split(".")
+                parts[1] = str(mapping[int(parts[1])])
+                final_state_dict[".".join(parts)] = val
+            else:
+                final_state_dict[key] = val
+
+        return final_state_dict
+
 
 
 class BlockChunk(nn.ModuleList):
@@ -674,403 +738,25 @@ class EvaWithChunking(Eva):
 
     def forward(self, x, masks=None, is_training=True):
         return self.forward_features_list(x, masks)
-
-
-class Eva_weight_fix(Eva):
-    """ Eva Vision Transformer w/ Abs & Rotary Pos Embed
-
-    This class implements the EVA and EVA02 models that were based on the BEiT ViT variant
-      * EVA - abs pos embed, global avg pool
-      * EVA02 - abs + rope pos embed, global avg pool, SwiGLU, scale Norm in MLP (ala normformer)
-
-
-    """
-
-    def _init_weights(self):
-        self.down_projection.apply(InitWeights_He(1e-2))
-
-        self.apply(self._init_weights_actual)
-        if self.pos_embed is not None:
-            trunc_normal_(self.pos_embed, std=.02)
-
-        self.fix_init_weight()
-
-    def fix_init_weight(self):
-        def rescale(param, layer_id):
-            param.div_(math.sqrt(2.0 * layer_id))
-
-        for layer_id, layer in enumerate(self.blocks):
-            rescale(layer.attn.proj.weight.data, layer_id + 1)
-            rescale(layer.mlp.fc2.weight.data, layer_id + 1)
-
-    def _init_weights_actual(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
-
-
-class Eva_pos_embed_fix(Eva):
-    """ Eva Vision Transformer w/ Abs & Rotary Pos Embed
-
-    This class implements the EVA and EVA02 models that were based on the BEiT ViT variant
-      * EVA - abs pos embed, global avg pool
-      * EVA02 - abs + rope pos embed, global avg pool, SwiGLU, scale Norm in MLP (ala normformer)
-
-
-    """
-
-    def __init__(
-            self,
-            input_channels: int = 1,
-            global_crops_size: Tuple[int, ...] = None,
-            local_crops_size: Tuple[int, ...] = None,
-            embed_dim: int = 864,
-            patch_size: Tuple[int, ...] = (8, 8, 8),
-            depth: int = 24,
-            num_heads: int = 12,
-            qkv_bias: bool = True,
-            qkv_fused: bool = False,
-            mlp_ratio: float = 4 * 2 / 3,
-            swiglu_mlp: bool = True,
-            scale_mlp: bool = True,
-            scale_attn_inner: bool = False,
-            pos_drop_rate: float = 0.,
-            proj_drop_rate: float = 0.,  # drops out things related to the projection. That is in the MLP and at the end of EVA attention
-            attn_drop_rate: float = 0.,  # drops attention, meaning connections between patches may bebroken up at random
-            drop_path_rate: float = 0.,  # drops computations (multihead attention, mlp), Implementation of scaling might be useless here because this is not batch normed
-            drop_path_uniform: bool = False,
-            norm_layer: Callable = LayerNorm,
-            init_values: Optional[float] = None,
-            class_token: bool = True,
-            use_abs_pos_emb: bool = True,
-            use_rot_pos_emb: bool = True,
-            dynamic_img_size: bool = False,
-            num_reg_tokens: int = 0,
-            drop_path_scale: bool = True,
-            rope_impl = RotaryEmbeddingCat,
-            rope_kwargs = None
-    ):
-        """
-        Diff to timm implementation
-
-        - removed patch embedding, we expect embeded patches
-        - removed classification token, we use features at the end
-        - removed head
-        - dynamic image size is not supported, but left in for future stuff
-        - self.cls_token removed
-        - removed postnorm block support
-        """
-        super().__init__()
-
-        self.patch_size = [patch_size] * 3 if isinstance(patch_size, int) else patch_size
-        self.global_crops_size = [global_crops_size] * 3 if isinstance(global_crops_size, int) else global_crops_size
-        self.local_crops_size = [local_crops_size] * 3 if isinstance(local_crops_size, int) else local_crops_size
-
-        self.global_ref_feat_shape = tuple([i // ds for i, ds in zip(self.global_crops_size, self.patch_size)])
-        self.local_ref_feat_shape = tuple([i // ds for i, ds in zip(self.local_crops_size, self.patch_size)])
-
-        # Patch embedding for encoder
-        self.down_projection = PatchEmbed(self.patch_size, input_channels, embed_dim)
-
-        if rope_kwargs is None:
-            rope_kwargs = {}
-
-        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-        self.dynamic_img_size = dynamic_img_size
-        self.grad_checkpointing = False
-
-        self.num_reg_tokens = num_reg_tokens
-        self.num_class_tokens = (1 if class_token else 0)
-        self.num_prefix_tokens = self.num_class_tokens + self.num_reg_tokens
-
-        num_patches = np.prod(self.local_ref_feat_shape)
-
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if class_token else None
-        self.reg_token = nn.Parameter(torch.zeros(1, num_reg_tokens, embed_dim)) if num_reg_tokens else None
-        self.cls_embed = class_token and self.reg_token is None
-
-        self.pos_embed = nn.Parameter(
-            torch.zeros(1, num_patches + self.num_prefix_tokens, embed_dim)) if use_abs_pos_emb else None
-        self.pos_drop = nn.Dropout(p=pos_drop_rate)
-
-        if use_rot_pos_emb:
-            if len(self.global_ref_feat_shape) == 3:
-                rope_dim = round(embed_dim // num_heads / 1.5)
-                assert rope_dim == embed_dim / num_heads / 1.5, 'rope dim must be divsible by (num_heads * 1.5)'
-                assert rope_dim % 4 == 0, 'rope dim must be divisible by 4'
-            else:
-                rope_dim = embed_dim // num_heads
-            self.global_rope = rope_impl(
-                rope_dim,
-                in_pixels=False,
-                feat_shape=self.global_ref_feat_shape,
-                ref_feat_shape=self.global_ref_feat_shape,
-                **rope_kwargs
-            )
-            self.local_rope = rope_impl(
-                rope_dim,
-                in_pixels=False,
-                feat_shape=self.local_ref_feat_shape,
-                ref_feat_shape=self.local_ref_feat_shape,
-                **rope_kwargs
-            )
-        else:
-            self.global_rope = None
-            self.local_rope = None
-
-        if drop_path_uniform is True:
-            dpr = [drop_path_rate] * depth
-        else:
-            dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
-
-        block_fn = EvaBlock
-        self.blocks = nn.ModuleList([
-            block_fn(
-                dim=embed_dim,
-                num_heads=num_heads,
-                qkv_bias=qkv_bias,
-                qkv_fused=qkv_fused,
-                mlp_ratio=mlp_ratio,
-                swiglu_mlp=swiglu_mlp,
-                scale_mlp=scale_mlp,
-                scale_attn_inner=scale_attn_inner,
-                proj_drop=proj_drop_rate,
-                attn_drop=attn_drop_rate,
-                drop_path=dpr[i],
-                norm_layer=norm_layer,
-                init_values=init_values,
-                num_prefix_tokens=self.num_prefix_tokens,
-                drop_path_scale=drop_path_scale
-            )
-            for i in range(depth)])
-
-        self.norm = norm_layer(embed_dim)
-        self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-
-        self._init_weights()
-
-    def _pos_embed(self, x, d, w, h) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Computes positional embeddings with interpolation if needed.
-
-        Args:
-            x (torch.Tensor): Input tensor after patch embedding, shape (B, N, C).
-            d, w, h (int): Spatial dimensions of the original image before downprojection.
-
-        Returns:
-            Tuple[torch.Tensor, Optional[torch.Tensor]]: Positionally encoded input.
-        """
-        pos_embed = self.pos_embed
-
-        # Add CLS token to input before interpolation
-        if self.cls_token is not None:
-            x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
-
-        # Use `self.ref_feat_shape` for source grid size (from pretraining)
-        source_D, source_H, source_W = self.global_ref_feat_shape  # Pretraining patch grid size
-
-        # Compute target (current input) grid size
-        target_D = d // self.patch_size[0]
-        target_H = w // self.patch_size[1]
-        target_W = h // self.patch_size[2]
-
-        # If needed, interpolate only patch embeddings
-        if (source_D, source_H, source_W) != (target_D, target_H, target_W):
-            rot_pos_embed = self.local_rope.get_embed() if self.local_rope is not None else None
-        else:
-            rot_pos_embed = self.global_rope.get_embed() if self.global_rope is not None else None
-
-        # Add interpolated positional embeddings
-        if pos_embed is not None:
-            x = x + pos_embed
-
-        # Handle register tokens if present
-        if self.reg_token is not None:
-            to_cat = []
-            if self.cls_token is not None:
-                to_cat.append(self.cls_token.expand(x.shape[0], -1, -1))
-            to_cat.append(self.reg_token.expand(x.shape[0], -1, -1))
-            x = torch.cat(to_cat + [x], dim=1)
-
-        x = self.pos_drop(x)
-
-        return x, rot_pos_embed
-
-
-class Eva_rope_pos_embed_fix(Eva):
-    """ Eva Vision Transformer w/ Abs & Rotary Pos Embed
-
-    This class implements the EVA and EVA02 models that were based on the BEiT ViT variant
-      * EVA - abs pos embed, global avg pool
-      * EVA02 - abs + rope pos embed, global avg pool, SwiGLU, scale Norm in MLP (ala normformer)
-
-
-    """
-
-    def __init__(
-            self,
-            input_channels: int = 1,
-            global_crops_size: Tuple[int, ...] = None,
-            local_crops_size: Tuple[int, ...] = None,
-            embed_dim: int = 864,
-            patch_size: Tuple[int, ...] = (8, 8, 8),
-            depth: int = 24,
-            num_heads: int = 12,
-            qkv_bias: bool = True,
-            qkv_fused: bool = False,
-            mlp_ratio: float = 4 * 2 / 3,
-            swiglu_mlp: bool = True,
-            scale_mlp: bool = True,
-            scale_attn_inner: bool = False,
-            pos_drop_rate: float = 0.,
-            proj_drop_rate: float = 0.,  # drops out things related to the projection. That is in the MLP and at the end of EVA attention
-            attn_drop_rate: float = 0.,  # drops attention, meaning connections between patches may bebroken up at random
-            drop_path_rate: float = 0.,  # drops computations (multihead attention, mlp), Implementation of scaling might be useless here because this is not batch normed
-            drop_path_uniform: bool = False,
-            norm_layer: Callable = LayerNorm,
-            init_values: Optional[float] = None,
-            class_token: bool = True,
-            use_abs_pos_emb: bool = True,
-            use_rot_pos_emb: bool = True,
-            dynamic_img_size: bool = False,
-            num_reg_tokens: int = 0,
-            drop_path_scale: bool = True,
-            rope_impl = RotaryEmbeddingCat,
-            rope_kwargs = None
-    ):
-        """
-        Diff to timm implementation
-
-        - removed patch embedding, we expect embeded patches
-        - removed classification token, we use features at the end
-        - removed head
-        - dynamic image size is not supported, but left in for future stuff
-        - self.cls_token removed
-        - removed postnorm block support
-        """
-        super().__init__()
-
-        self.patch_size = [patch_size] * 3 if isinstance(patch_size, int) else patch_size
-        self.local_crops_size = [local_crops_size] * 3 if isinstance(local_crops_size, int) else local_crops_size
-
-        self.local_ref_feat_shape = tuple([i // ds for i, ds in zip(self.local_crops_size, self.patch_size)])
-
-        # Patch embedding for encoder
-        self.down_projection = PatchEmbed(self.patch_size, input_channels, embed_dim)
-
-        if rope_kwargs is None:
-            rope_kwargs = {}
-
-        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-        self.dynamic_img_size = dynamic_img_size
-        self.grad_checkpointing = False
-
-        self.num_reg_tokens = num_reg_tokens
-        self.num_class_tokens = (1 if class_token else 0)
-        self.num_prefix_tokens = self.num_class_tokens + self.num_reg_tokens
-
-        num_patches = np.prod(self.local_ref_feat_shape)
-
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if class_token else None
-        self.reg_token = nn.Parameter(torch.zeros(1, num_reg_tokens, embed_dim)) if num_reg_tokens else None
-        self.cls_embed = class_token and self.reg_token is None
-
-        self.pos_embed = nn.Parameter(
-            torch.zeros(1, num_patches + self.num_prefix_tokens, embed_dim)) if use_abs_pos_emb else None
-        self.pos_drop = nn.Dropout(p=pos_drop_rate)
-
-        if use_rot_pos_emb:
-            if len(self.global_ref_feat_shape) == 3:
-                rope_dim = round(embed_dim // num_heads / 1.5)
-                assert rope_dim == embed_dim / num_heads / 1.5, 'rope dim must be divsible by (num_heads * 1.5)'
-                assert rope_dim % 4 == 0, 'rope dim must be divisible by 4'
-            else:
-                rope_dim = embed_dim // num_heads
-            self.local_rope = rope_impl(
-                rope_dim,
-                in_pixels=False,
-                feat_shape=self.local_ref_feat_shape,
-                ref_feat_shape=self.local_ref_feat_shape,
-                **rope_kwargs
-            )
-        else:
-            self.local_rope = None
-
-        if drop_path_uniform is True:
-            dpr = [drop_path_rate] * depth
-        else:
-            dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
-
-        block_fn = EvaBlock
-        self.blocks = nn.ModuleList([
-            block_fn(
-                dim=embed_dim,
-                num_heads=num_heads,
-                qkv_bias=qkv_bias,
-                qkv_fused=qkv_fused,
-                mlp_ratio=mlp_ratio,
-                swiglu_mlp=swiglu_mlp,
-                scale_mlp=scale_mlp,
-                scale_attn_inner=scale_attn_inner,
-                proj_drop=proj_drop_rate,
-                attn_drop=attn_drop_rate,
-                drop_path=dpr[i],
-                norm_layer=norm_layer,
-                init_values=init_values,
-                num_prefix_tokens=self.num_prefix_tokens,
-                drop_path_scale=drop_path_scale
-            )
-            for i in range(depth)])
-
-        self.norm = norm_layer(embed_dim)
-        self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-
-        self._init_weights()
-
-    def _pos_embed(self, x, d, w, h) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Computes positional embeddings with interpolation if needed.
-
-        Args:
-            x (torch.Tensor): Input tensor after patch embedding, shape (B, N, C).
-            d, w, h (int): Spatial dimensions of the original image before downprojection.
-
-        Returns:
-            Tuple[torch.Tensor, Optional[torch.Tensor]]: Positionally encoded input.
-        """
-        pos_embed = self.pos_embed
-
-        # Add CLS token to input before interpolation
-        if self.cls_token is not None:
-            x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
-
-        # Use `self.ref_feat_shape` for source grid size (from pretraining)
-        source_D, source_H, source_W = self.global_ref_feat_shape  # Pretraining patch grid size
-
-        # Compute target (current input) grid size
-        target_D = d // self.patch_size[0]
-        target_H = w // self.patch_size[1]
-        target_W = h // self.patch_size[2]
-
-        rot_pos_embed = self.local_rope.get_embed() if self.local_rope is not None else None
-
-        # Add interpolated positional embeddings
-        if pos_embed is not None:
-            x = x + pos_embed
-
-        # Handle register tokens if present
-        if self.reg_token is not None:
-            to_cat = []
-            if self.cls_token is not None:
-                to_cat.append(self.cls_token.expand(x.shape[0], -1, -1))
-            to_cat.append(self.reg_token.expand(x.shape[0], -1, -1))
-            x = torch.cat(to_cat + [x], dim=1)
-
-        x = self.pos_drop(x)
-
-        return x, rot_pos_embed
     
+
+class Dinov2PrimusEncL(Eva):
+    def __init__(self,
+                 input_channels,
+                 input_shape):
+        super().__init__(
+            input_channels=input_channels,
+            global_crops_size=96,
+            local_crops_size=input_shape,
+            embed_dim=864,
+            patch_size=(8, 8, 8),
+            depth=24,
+            num_heads=16,
+            mlp_ratio=2.66666666,
+            attn_drop_rate=0.2,
+            drop_path_rate=0.2
+        )
+
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
