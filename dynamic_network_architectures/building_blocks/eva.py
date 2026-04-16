@@ -104,7 +104,7 @@ class Eva(nn.Module):
         else:
             self.rope = None
 
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        dpr = np.linspace(0, drop_path_rate, depth)  # stochastic depth decay rule
         block_fn = block_fn
         self.blocks = nn.ModuleList(
             [
@@ -119,7 +119,7 @@ class Eva(nn.Module):
                     scale_attn_inner=scale_attn_inner,
                     proj_drop=proj_drop_rate,
                     attn_drop=attn_drop_rate,
-                    drop_path=dpr[i],
+                    drop_path=float(dpr[i]),
                     norm_layer=norm_layer,
                     init_values=init_values,
                     num_prefix_tokens=self.num_prefix_tokens,
