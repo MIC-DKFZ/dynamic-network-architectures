@@ -260,3 +260,139 @@ class PatchEmbed_deeper(nn.Module):
         x = self.final_proj(x)
 
         return x
+
+
+class PatchEmbedDeeperControlled(nn.Module):
+
+    def __init__(
+        self,
+        input_channels: int = 3,
+        embed_dim: int = 864,
+        depth_per_level: tuple[int, ...] = (1, 1, 1),  # number of residual blocks per level
+        ch_per_level: tuple[int, ...] = (32, 64, 256, 1024),  # Channels of current v4
+        add_skips: bool = True,
+    ) -> None:
+        """
+        ResNet-style Patch Embedding with controllable channels for each depth level.
+
+        :param input_channels: Amount of input channels
+        :type input_channels: int
+        :param embed_dim: Embedding dimension of the Patch Embedding
+        :type embed_dim: int
+        :param depth_per_level: Amount of Stacked Residual Blocks for each dowsampling level. Tuple length defines downsampling, currently 2**3 = 8 global stride.
+        :type depth_per_level: tuple[int, ...]
+        :param ch_per_level: Channel dimension projected to at each level. Length must be len(depth_per_level) + 1. Index 0 defines stem as well.
+        :type ch_per_level: tuple[int, ...]
+        :param add_skips: Flag, adding a Conv skip connection from the feature maps at each level to the final token grid. (default: True)
+        :type add_skips: bool
+        """
+        super().__init__()
+        self.add_skips = add_skips
+        norm_op = nn.InstanceNorm3d
+        nonlin = nn.ReLU
+        norm_op_kwargs = {"eps": 1e-5, "affine": True}
+        nonlin_kwargs = {"inplace": True}
+
+        # Stem convolution (initial feature extraction)
+        base_features = ch_per_level[0]
+
+        self.stem = StackedResidualBlocks(
+            1,
+            nn.Conv3d,
+            input_channels,
+            base_features,
+            [3, 3, 3],
+            1,
+            True,
+            norm_op,
+            norm_op_kwargs,
+            None,
+            None,
+            nonlin,
+            nonlin_kwargs,
+            block=BasicBlockD,
+        )
+        # Calculate total downsampling needed
+        levels_needed = len(depth_per_level)
+
+        # Build encoder stages
+        self.stages = nn.ModuleList()
+        input_channels = base_features
+        for i in range(levels_needed):
+            # First block in each stage handles downsampling and channel increase
+            stride = 2
+            output_channels = ch_per_level[i + 1]
+            stage = StackedResidualBlocks(
+                n_blocks=depth_per_level[i],
+                conv_op=nn.Conv3d,
+                input_channels=input_channels,
+                output_channels=output_channels,
+                kernel_size=3,
+                initial_stride=stride,
+                conv_bias=False,
+                norm_op=norm_op,
+                norm_op_kwargs=norm_op_kwargs,
+                dropout_op=None,
+                dropout_op_kwargs=None,
+                nonlin=nonlin,
+                nonlin_kwargs=nonlin_kwargs,
+                block=BasicBlockD,
+                bottleneck_channels=None,
+            )
+            self.stages.append(stage)
+            input_channels = output_channels
+
+        self.final_proj = nn.Conv3d(input_channels, embed_dim, kernel_size=1, stride=1, padding=0)
+
+        # ------------------------ start CONTRIBUTED BY IKIM STUDENT ----------------------- #
+        # Luc.bouteille@uk-essen.de
+        if self.add_skips:
+            self.proj_to_tokens = nn.ModuleList()
+
+            def _proj(in_ch: int, down_by: int) -> nn.Conv3d:
+                return nn.Conv3d(
+                    in_ch,
+                    embed_dim,
+                    kernel_size=(down_by, down_by, down_by),
+                    stride=(down_by, down_by, down_by),
+                    padding=0,
+                    bias=True,
+                )
+
+            # stem is at full resolution -> down_by = 2**levels_needed
+            self.proj_to_tokens.append(_proj(base_features, 2**levels_needed))
+            # stages[0] output is /2, stages[1] output is /4, ... -> project all but last to /2**levels_needed
+            for i in range(levels_needed - 1):
+                in_ch = ch_per_level[i + 1]
+                down_by = 2 ** (levels_needed - (i + 1))
+                self.proj_to_tokens.append(_proj(in_ch, down_by))
+
+            # Learnable scales for token-grid skip projections, initialized near zero.
+            # Indexing matches proj_to_tokens: 0=stem, 1=stage0 (/2), 2=stage1 (/4), ...
+            self.scale_proj_to_tokens = nn.ParameterList(
+                [nn.Parameter(torch.tensor(float(1e-5))) for _ in range(len(self.proj_to_tokens))]
+            )
+        # ------------------------ END CONTRIBUTION BY STUDENT ----------------------- #
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Stem
+        x = self.stem(x)
+        # Add_skips idea of Luc.bouteille@uk-essen.de
+        if self.add_skips:
+            p = self.scale_proj_to_tokens[0] * self.proj_to_tokens[0](x)
+
+        # Progressive encoding through residual stages
+        for i, stage in enumerate(self.stages):
+            x = stage(x)
+            # Do skip projection to token grid
+            if self.add_skips and i < len(self.stages) - 1:
+                j = i + 1
+                p = p + self.scale_proj_to_tokens[j] * self.proj_to_tokens[j](x)
+
+        # Final projection to embedding tokens
+        x = self.final_proj(x)
+        # Add skip projections
+        if self.add_skips:
+            x = x + p
+
+        return x
