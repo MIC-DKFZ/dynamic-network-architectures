@@ -1,6 +1,6 @@
 from typing import Callable, Optional
 
-from timm.models import LayerNorm
+from timm.layers import LayerNorm 
 import torch
 from torch import nn
 from timm.models.eva import EvaBlock as TimmEvaBlock
