@@ -68,6 +68,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
         rope_kwargs=None,
         init_values=None,
         scale_attn_inner=False,
+        use_grn=False,
     ):
         """
         Architecture as proposed in the Primus paper (https://arxiv.org/pdf/2503.01835)
@@ -109,6 +110,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
             rope_kwargs=rope_kwargs,
             init_values=init_values,
             scale_attn_inner=scale_attn_inner,
+            use_grn=use_grn,
         )
         # self.mask_token =
         self.mask_token: torch.Tensor
@@ -320,17 +322,18 @@ class PrimusV3(Primus):
         use_rot_pos_emb: bool = True,
         use_abs_pos_embed: bool = True,
         mlp_ratio=4 * 2 / 3,
-        drop_path_rate=0,  # drops computations (multihead attention, mlp), Implementation of scaling might be useless here because this is not batch normed
+        drop_path_rate=0.2,  #
         patch_drop_rate: float = 0.0,  # drops input patches, may be used for MAE style pretraining
         proj_drop_rate: float = 0.0,  # drops out things related to the projection. That is in the MLP and at the end of EVA attention
         attn_drop_rate: float = 0.0,  # drops attention, meaning connections between patches may bebroken up at random
         rope_impl=RotaryEmbeddingCat,
         rope_kwargs=None,
-        init_values=None,
-        scale_attn_inner=False,
+        init_values=0.1,  # Set to None to disable
+        scale_attn_inner=True,
         depth_per_level: tuple[int, ...] = (1, 1, 1),
         ch_per_level: tuple[int, ...] = (32, 64, 256, 1024),
         add_skips: bool = True,
+        use_grn: bool = True,
     ):
         super().__init__(
             input_channels=input_channels,
@@ -354,6 +357,7 @@ class PrimusV3(Primus):
             rope_kwargs=rope_kwargs,
             init_values=init_values,
             scale_attn_inner=scale_attn_inner,
+            use_grn=use_grn,
         )
         self.keys_to_in_proj = (
             "down_projection.stem.blocks.0.conv1.conv",
@@ -411,12 +415,13 @@ class PrimusV3X(PrimusV3):
         config_name: str,
         patch_embed_size: Tuple[int, ...],
         input_shape: Tuple[int, ...] = None,
-        drop_path_rate=0,  # drops computations (multihead attention, mlp), Implementation of scaling might be useless here because this is not batch normed
+        drop_path_rate=0.2,  # drops computations (multihead attention, mlp), Implementation of scaling might be useless here because this is not batch normed
         patch_drop_rate: float = 0.0,  # drops input patches, may be used for MAE style pretraining
         rope_impl=RotaryEmbeddingCat,
         rope_kwargs=None,
-        init_values=None,
-        scale_attn_inner=False,
+        init_values=0.1,
+        scale_attn_inner=True,
+        use_grn=True,
     ):
         conf = _PRIMUS_CONFIGS[config_name]
         super().__init__(
@@ -433,6 +438,7 @@ class PrimusV3X(PrimusV3):
             rope_kwargs=rope_kwargs,
             init_values=init_values,
             scale_attn_inner=scale_attn_inner,
+            use_grn=use_grn,
         )
 
 
@@ -718,6 +724,7 @@ class PrimusV3S(PrimusV3X):
         rope_kwargs=None,
         init_values=0.1,
         scale_attn_inner=True,
+        use_grn=True,
     ):
         super().__init__(
             input_channels,
@@ -731,6 +738,7 @@ class PrimusV3S(PrimusV3X):
             rope_kwargs,
             init_values,
             scale_attn_inner,
+            use_grn,
         )
 
 
@@ -748,6 +756,7 @@ class PrimusV3B(PrimusV3X):
         rope_kwargs=None,
         init_values=0.1,
         scale_attn_inner=True,
+        use_grn=True,
     ):
         super().__init__(
             input_channels,
@@ -761,6 +770,7 @@ class PrimusV3B(PrimusV3X):
             rope_kwargs,
             init_values,
             scale_attn_inner,
+            use_grn,
         )
 
 
@@ -778,6 +788,7 @@ class PrimusV3M(PrimusV3X):
         rope_kwargs=None,
         init_values=0.1,
         scale_attn_inner=True,
+        use_grn=True,
     ):
         super().__init__(
             input_channels,
@@ -791,6 +802,7 @@ class PrimusV3M(PrimusV3X):
             rope_kwargs,
             init_values,
             scale_attn_inner,
+            use_grn,
         )
 
 
@@ -808,6 +820,7 @@ class PrimusV3L(PrimusV3X):
         rope_kwargs=None,
         init_values=0.1,
         scale_attn_inner=True,
+        use_grn=True,
     ):
         super().__init__(
             input_channels,
@@ -821,6 +834,7 @@ class PrimusV3L(PrimusV3X):
             rope_kwargs,
             init_values,
             scale_attn_inner,
+            use_grn,
         )
 
 
