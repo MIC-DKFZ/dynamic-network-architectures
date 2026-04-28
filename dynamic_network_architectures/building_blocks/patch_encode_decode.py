@@ -271,6 +271,7 @@ class PatchEmbedDeeperControlled(nn.Module):
         depth_per_level: tuple[int, ...] = (1, 1, 1),  # number of residual blocks per level
         ch_per_level: tuple[int, ...] = (32, 64, 256, 1024),  # Channels of current v4
         add_skips: bool = True,
+        nonlin=nn.LeakyReLU,
     ) -> None:
         """
         ResNet-style Patch Embedding with controllable channels for each depth level.
@@ -289,7 +290,7 @@ class PatchEmbedDeeperControlled(nn.Module):
         super().__init__()
         self.add_skips = add_skips
         norm_op = nn.InstanceNorm3d
-        nonlin = nn.ReLU
+        nonlin = nonlin
         norm_op_kwargs = {"eps": 1e-5, "affine": True}
         nonlin_kwargs = {"inplace": True}
 
