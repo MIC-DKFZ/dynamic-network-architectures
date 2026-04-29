@@ -334,6 +334,7 @@ class PrimusV3(Primus):
         ch_per_level: tuple[int, ...] = (32, 64, 256, 1024),
         add_skips: bool = True,
         use_grn: bool = True,
+        nonlin=nn.LeakyReLU,
     ):
         super().__init__(
             input_channels=input_channels,
@@ -369,6 +370,7 @@ class PrimusV3(Primus):
             depth_per_level=depth_per_level,
             ch_per_level=ch_per_level,
             add_skips=add_skips,
+            nonlin=nonlin,
         )
         self.down_projection.apply(InitWeights_He(1e-2))
 
