@@ -8,7 +8,13 @@ from dynamic_network_architectures.architectures.abstract_arch import (
     test_submodules_loadable,
 )
 from dynamic_network_architectures.building_blocks.eva import Eva
-from dynamic_network_architectures.building_blocks.patch_encode_decode import LayerNormNd, PatchDecode, PatchEmbed
+from dynamic_network_architectures.building_blocks.patch_encode_decode import (
+    LayerNormNd,
+    PatchDecode,
+    PatchEmbed,
+    PatchEmbed_deeper,
+    PatchEmbedDeeperControlled,
+)
 from dynamic_network_architectures.initialization.weight_init import InitWeights_He
 from einops import rearrange
 
@@ -62,6 +68,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
         rope_kwargs=None,
         init_values=None,
         scale_attn_inner=False,
+        use_grn=False,
     ):
         """
         Architecture as proposed in the Primus paper (https://arxiv.org/pdf/2503.01835)
@@ -74,6 +81,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
         assert all([j % i == 0 for i, j in zip(patch_embed_size, input_shape)])
 
         super().__init__()
+        self.embed_dim = embed_dim
         self.key_to_encoder = "eva"
         self.key_to_stem = "down_projection"
         self.keys_to_in_proj = ("down_projection.proj",)
@@ -102,6 +110,7 @@ class Primus(AbstractDynamicNetworkArchitectures):
             rope_kwargs=rope_kwargs,
             init_values=init_values,
             scale_attn_inner=scale_attn_inner,
+            use_grn=use_grn,
         )
         # self.mask_token =
         self.mask_token: torch.Tensor
@@ -228,6 +237,210 @@ class PrimusX(Primus):
             rope_kwargs=rope_kwargs,
             init_values=init_values,
             scale_attn_inner=scale_attn_inner,
+        )
+
+
+class PrimusV2(Primus):
+
+    def __init__(
+        self,
+        input_channels: int,
+        embed_dim: int,
+        patch_embed_size: Tuple[int, ...],
+        num_classes: int,
+        eva_depth: int = 24,
+        eva_numheads: int = 16,
+        input_shape: Tuple[int, ...] = None,
+        decoder_norm=LayerNormNd,
+        decoder_act=nn.GELU,
+        num_register_tokens: int = 0,
+        use_rot_pos_emb: bool = True,
+        use_abs_pos_embed: bool = True,
+        mlp_ratio=4 * 2 / 3,
+        drop_path_rate=0,  # drops computations (multihead attention, mlp), Implementation of scaling might be useless here because this is not batch normed
+        patch_drop_rate: float = 0.0,  # drops input patches, may be used for MAE style pretraining
+        proj_drop_rate: float = 0.0,  # drops out things related to the projection. That is in the MLP and at the end of EVA attention
+        attn_drop_rate: float = 0.0,  # drops attention, meaning connections between patches may bebroken up at random
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=None,
+        scale_attn_inner=False,
+    ):
+        super().__init__(
+            input_channels=input_channels,
+            embed_dim=embed_dim,
+            patch_embed_size=patch_embed_size,
+            num_classes=num_classes,
+            eva_depth=eva_depth,
+            eva_numheads=eva_numheads,
+            input_shape=input_shape,
+            decoder_norm=decoder_norm,
+            decoder_act=decoder_act,
+            num_register_tokens=num_register_tokens,
+            use_rot_pos_emb=use_rot_pos_emb,
+            use_abs_pos_embed=use_abs_pos_embed,
+            mlp_ratio=mlp_ratio,
+            drop_path_rate=drop_path_rate,
+            patch_drop_rate=patch_drop_rate,
+            proj_drop_rate=proj_drop_rate,
+            attn_drop_rate=attn_drop_rate,
+            rope_impl=rope_impl,
+            rope_kwargs=rope_kwargs,
+            init_values=init_values,
+            scale_attn_inner=scale_attn_inner,
+        )
+        self.keys_to_in_proj = (
+            "down_projection.stem.blocks.0.conv1.conv",
+            "down_projection.stem.blocks.0.conv1.all_modules.0",
+        )
+        self.down_projection = PatchEmbed_deeper(
+            input_channels=input_channels,
+            embed_dim=embed_dim,
+            base_features=32,
+            depth_per_level=(1, 1, 1),
+            embed_proj_3x3x3=False,
+            embed_block_style="residual",
+            embed_block_type="basic",  # "basic" or "bottleneck" (if "residual" style)
+        )
+        self.down_projection.apply(InitWeights_He(1e-2))
+
+
+class PrimusV3(Primus):
+
+    def __init__(
+        self,
+        input_channels: int,
+        embed_dim: int,
+        patch_embed_size: Tuple[int, ...],
+        num_classes: int,
+        eva_depth: int = 24,
+        eva_numheads: int = 16,
+        input_shape: Tuple[int, ...] = None,
+        decoder_norm=LayerNormNd,
+        decoder_act=nn.GELU,
+        num_register_tokens: int = 0,
+        use_rot_pos_emb: bool = True,
+        use_abs_pos_embed: bool = True,
+        mlp_ratio=4 * 2 / 3,
+        drop_path_rate=0.2,  #
+        patch_drop_rate: float = 0.0,  # drops input patches, may be used for MAE style pretraining
+        proj_drop_rate: float = 0.0,  # drops out things related to the projection. That is in the MLP and at the end of EVA attention
+        attn_drop_rate: float = 0.0,  # drops attention, meaning connections between patches may bebroken up at random
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,  # Set to None to disable
+        scale_attn_inner=True,
+        depth_per_level: tuple[int, ...] = (1, 1, 1),
+        ch_per_level: tuple[int, ...] = (32, 64, 256, 1024),
+        add_skips: bool = True,
+        use_grn: bool = True,
+        nonlin=nn.LeakyReLU,
+    ):
+        super().__init__(
+            input_channels=input_channels,
+            embed_dim=embed_dim,
+            patch_embed_size=patch_embed_size,
+            num_classes=num_classes,
+            eva_depth=eva_depth,
+            eva_numheads=eva_numheads,
+            input_shape=input_shape,
+            decoder_norm=decoder_norm,
+            decoder_act=decoder_act,
+            num_register_tokens=num_register_tokens,
+            use_rot_pos_emb=use_rot_pos_emb,
+            use_abs_pos_embed=use_abs_pos_embed,
+            mlp_ratio=mlp_ratio,
+            drop_path_rate=drop_path_rate,
+            patch_drop_rate=patch_drop_rate,
+            proj_drop_rate=proj_drop_rate,
+            attn_drop_rate=attn_drop_rate,
+            rope_impl=rope_impl,
+            rope_kwargs=rope_kwargs,
+            init_values=init_values,
+            scale_attn_inner=scale_attn_inner,
+            use_grn=use_grn,
+        )
+        self.keys_to_in_proj = (
+            "down_projection.stem.blocks.0.conv1.conv",
+            "down_projection.stem.blocks.0.conv1.all_modules.0",
+        )
+        self.down_projection = PatchEmbedDeeperControlled(
+            input_channels=input_channels,
+            embed_dim=embed_dim,
+            depth_per_level=depth_per_level,
+            ch_per_level=ch_per_level,
+            add_skips=add_skips,
+            nonlin=nonlin,
+        )
+        self.down_projection.apply(InitWeights_He(1e-2))
+
+
+class PrimusV2X(PrimusV2):
+
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        config_name: str,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0,  # drops computations (multihead attention, mlp), Implementation of scaling might be useless here because this is not batch normed
+        patch_drop_rate: float = 0.0,  # drops input patches, may be used for MAE style pretraining
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=None,
+        scale_attn_inner=False,
+    ):
+        conf = _PRIMUS_CONFIGS[config_name]
+        super().__init__(
+            input_channels=input_channels,
+            num_classes=output_channels,
+            embed_dim=conf["embed_dim"],
+            eva_depth=conf["eva_depth"],
+            eva_numheads=conf["eva_numheads"],
+            patch_embed_size=patch_embed_size,
+            input_shape=input_shape,
+            drop_path_rate=drop_path_rate,
+            patch_drop_rate=patch_drop_rate,
+            rope_impl=rope_impl,
+            rope_kwargs=rope_kwargs,
+            init_values=init_values,
+            scale_attn_inner=scale_attn_inner,
+        )
+
+
+class PrimusV3X(PrimusV3):
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        config_name: str,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0.2,  # drops computations (multihead attention, mlp), Implementation of scaling might be useless here because this is not batch normed
+        patch_drop_rate: float = 0.0,  # drops input patches, may be used for MAE style pretraining
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,
+        scale_attn_inner=True,
+        use_grn=True,
+    ):
+        conf = _PRIMUS_CONFIGS[config_name]
+        super().__init__(
+            input_channels=input_channels,
+            num_classes=output_channels,
+            embed_dim=conf["embed_dim"],
+            eva_depth=conf["eva_depth"],
+            eva_numheads=conf["eva_numheads"],
+            patch_embed_size=patch_embed_size,
+            input_shape=input_shape,
+            drop_path_rate=drop_path_rate,
+            patch_drop_rate=patch_drop_rate,
+            rope_impl=rope_impl,
+            rope_kwargs=rope_kwargs,
+            init_values=init_values,
+            scale_attn_inner=scale_attn_inner,
+            use_grn=use_grn,
         )
 
 
@@ -371,47 +584,484 @@ class PrimusL(PrimusX):
         )
 
 
+class PrimusV2S(PrimusV2X):
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0,
+        patch_drop_rate: float = 0.0,
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,
+        scale_attn_inner=True,
+    ):
+        """
+        Official Primus-V2-S Architecture with deeper patch embedding.
+        """
+        super().__init__(
+            input_channels=input_channels,
+            output_channels=output_channels,
+            config_name="S",
+            patch_embed_size=patch_embed_size,
+            input_shape=input_shape,
+            drop_path_rate=drop_path_rate,
+            patch_drop_rate=patch_drop_rate,
+            rope_impl=rope_impl,
+            rope_kwargs=rope_kwargs,
+            init_values=init_values,
+            scale_attn_inner=scale_attn_inner,
+        )
+
+
+class PrimusV2B(PrimusV2X):
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0,
+        patch_drop_rate: float = 0.0,
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,
+        scale_attn_inner=True,
+    ):
+        """
+        Official Primus-V2-B Architecture with deeper patch embedding.
+        """
+        super().__init__(
+            input_channels=input_channels,
+            output_channels=output_channels,
+            config_name="B",
+            patch_embed_size=patch_embed_size,
+            input_shape=input_shape,
+            drop_path_rate=drop_path_rate,
+            patch_drop_rate=patch_drop_rate,
+            rope_impl=rope_impl,
+            rope_kwargs=rope_kwargs,
+            init_values=init_values,
+            scale_attn_inner=scale_attn_inner,
+        )
+
+
+class PrimusV2M(PrimusV2X):
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0,
+        patch_drop_rate: float = 0.0,
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,
+        scale_attn_inner=True,
+    ):
+        """
+        Official Primus-V2-M Architecture with deeper patch embedding.
+        """
+        super().__init__(
+            input_channels=input_channels,
+            output_channels=output_channels,
+            config_name="M",
+            patch_embed_size=patch_embed_size,
+            input_shape=input_shape,
+            drop_path_rate=drop_path_rate,
+            patch_drop_rate=patch_drop_rate,
+            rope_impl=rope_impl,
+            rope_kwargs=rope_kwargs,
+            init_values=init_values,
+            scale_attn_inner=scale_attn_inner,
+        )
+
+
+class PrimusV2L(PrimusV2X):
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0,
+        patch_drop_rate: float = 0.0,
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,
+        scale_attn_inner=True,
+    ):
+        """
+        Official Primus-V2-L Architecture with deeper patch embedding.
+        """
+        super().__init__(
+            input_channels=input_channels,
+            output_channels=output_channels,
+            config_name="L",
+            patch_embed_size=patch_embed_size,
+            input_shape=input_shape,
+            drop_path_rate=drop_path_rate,
+            patch_drop_rate=patch_drop_rate,
+            rope_impl=rope_impl,
+            rope_kwargs=rope_kwargs,
+            init_values=init_values,
+            scale_attn_inner=scale_attn_inner,
+        )
+
+
+class PrimusV3S(PrimusV3X):
+
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0.2,
+        patch_drop_rate: float = 0.0,
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,
+        scale_attn_inner=True,
+        use_grn=True,
+    ):
+        super().__init__(
+            input_channels,
+            output_channels,
+            "S",
+            patch_embed_size,
+            input_shape,
+            drop_path_rate,
+            patch_drop_rate,
+            rope_impl,
+            rope_kwargs,
+            init_values,
+            scale_attn_inner,
+            use_grn,
+        )
+
+
+class PrimusV3B(PrimusV3X):
+
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0.2,
+        patch_drop_rate: float = 0.0,
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,
+        scale_attn_inner=True,
+        use_grn=True,
+    ):
+        super().__init__(
+            input_channels,
+            output_channels,
+            "B",
+            patch_embed_size,
+            input_shape,
+            drop_path_rate,
+            patch_drop_rate,
+            rope_impl,
+            rope_kwargs,
+            init_values,
+            scale_attn_inner,
+            use_grn,
+        )
+
+
+class PrimusV3M(PrimusV3X):
+
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0.2,
+        patch_drop_rate: float = 0.0,
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,
+        scale_attn_inner=True,
+        use_grn=True,
+    ):
+        super().__init__(
+            input_channels,
+            output_channels,
+            "M",
+            patch_embed_size,
+            input_shape,
+            drop_path_rate,
+            patch_drop_rate,
+            rope_impl,
+            rope_kwargs,
+            init_values,
+            scale_attn_inner,
+            use_grn,
+        )
+
+
+class PrimusV3L(PrimusV3X):
+
+    def __init__(
+        self,
+        input_channels: int,
+        output_channels: int,
+        patch_embed_size: Tuple[int, ...],
+        input_shape: Tuple[int, ...] = None,
+        drop_path_rate=0.2,
+        patch_drop_rate: float = 0.0,
+        rope_impl=RotaryEmbeddingCat,
+        rope_kwargs=None,
+        init_values=0.1,
+        scale_attn_inner=True,
+        use_grn=True,
+    ):
+        super().__init__(
+            input_channels,
+            output_channels,
+            "L",
+            patch_embed_size,
+            input_shape,
+            drop_path_rate,
+            patch_drop_rate,
+            rope_impl,
+            rope_kwargs,
+            init_values,
+            scale_attn_inner,
+            use_grn,
+        )
+
+
 if __name__ == "__main__":
     from fvcore.nn import parameter_count, FlopCountAnalysis, parameter_count_table
     import time
 
-    print("Primus S")
-    x = torch.rand([1, 1, 96, 96, 96], device="cuda", dtype=torch.float32)
-    model = PrimusS(1, 2, (8, 8, 8), (96, 96, 96)).cuda()
+    def count_params_in_convs(model: nn.Module):
+        params = 0
+        for m in model.modules():
+            if isinstance(m, (nn.Conv3d, nn.ConvTranspose3d)):
+                params += sum(p.numel() for p in m.parameters())
+        return params
+
+    x = torch.rand([1, 1, 64, 64, 64], device="cuda", dtype=torch.float32)
+    print("Primus V2 S")
+    model = PrimusV2S(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
     _ = model(x)
-    print(f"Parameter count: {parameter_count(model)[''] / 1e6:.2f}M")
+    param_count_model = parameter_count(model)[""]
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
     test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
+    time.sleep(5)
+
+    print("Primus V2 B")
+    model = PrimusV2B(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
+    _ = model(x)
+    param_count_model = parameter_count(model)[""]
+    print(FlopCountAnalysis(model, x))
+    print(parameter_count_table(model, max_depth=2))
+
+    test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
+    time.sleep(5)
+
+    print("Primus V2 M")
+    model = PrimusV2M(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
+    _ = model(x)
+    param_count_model = parameter_count(model)[""]
+    print(FlopCountAnalysis(model, x))
+    print(parameter_count_table(model, max_depth=2))
+
+    test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
+    time.sleep(5)
+
+    print("Primus V2 L")
+    model = PrimusV2L(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
+    _ = model(x)
+    param_count_model = parameter_count(model)[""]
+    print(FlopCountAnalysis(model, x))
+    print(parameter_count_table(model, max_depth=2))
+
+    test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
+    print("Primus V3 S")
+    model = PrimusV3S(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
+    _ = model(x)
+    param_count_model = parameter_count(model)[""]
+    print(FlopCountAnalysis(model, x))
+    print(parameter_count_table(model, max_depth=2))
+
+    test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
+    time.sleep(5)
+
+    print("Primus V3 B")
+    model = PrimusV3B(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
+    _ = model(x)
+    param_count_model = parameter_count(model)[""]
+    print(FlopCountAnalysis(model, x))
+    print(parameter_count_table(model, max_depth=2))
+
+    test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
+    time.sleep(5)
+
+    print("Primus V3 M")
+    model = PrimusV3M(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
+    _ = model(x)
+    param_count_model = parameter_count(model)[""]
+    print(FlopCountAnalysis(model, x))
+    print(parameter_count_table(model, max_depth=2))
+
+    test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
+    time.sleep(5)
+
+    print("Primus V3 L")
+    model = PrimusV3L(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
+    _ = model(x)
+    param_count_model = parameter_count(model)[""]
+    print(FlopCountAnalysis(model, x))
+    print(parameter_count_table(model, max_depth=2))
+
+    test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
+    time.sleep(5)
+
+    print("Primus S")
+
+    model = PrimusS(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
+    _ = model(x)
+    param_count_model = parameter_count(model)[""]
+    print(FlopCountAnalysis(model, x))
+    print(parameter_count_table(model, max_depth=2))
+
+    test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
 
     time.sleep(5)
     print("Primus B")
-    model = PrimusB(1, 2, (8, 8, 8), (96, 96, 96)).cuda()
+    model = PrimusB(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
     _ = model(x)
-    print(f"Parameter count: {parameter_count(model)[''] / 1e6:.2f}M")
+    param_count_model = parameter_count(model)[""]
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
     test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
     time.sleep(5)
 
     print("Primus M")
-    model = PrimusM(1, 2, (8, 8, 8), (96, 96, 96)).cuda()
+    model = PrimusM(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
     _ = model(x)
-    print(f"Parameter count: {parameter_count(model)[''] / 1e6:.2f}M")
+    param_count_model = parameter_count(model)[""]
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
     test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
     time.sleep(5)
 
     print("Primus L")
-    model = PrimusL(1, 2, (8, 8, 8), (96, 96, 96)).cuda()
+    model = PrimusL(1, 2, (8, 8, 8), (64, 64, 64)).cuda()
     _ = model(x)
-    print(f"Parameter count: {parameter_count(model)[''] / 1e6:.2f}M")
+    param_count_model = parameter_count(model)[""]
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
     test_submodules_loadable(model)
+    model.eva = None
+    non_tr_params = parameter_count(model)[""]
+    param_count_convs = count_params_in_convs(model)
+    print(f"Parameter count: {param_count_model / 1e6:.2f}M")
+    print(f"Parameters non-tr: {non_tr_params / (param_count_model):.2%}")
+    print(f"Parameters in conv layers: {param_count_convs / (param_count_model):.2%}")
+    print(f"Params Others: {(non_tr_params - param_count_convs) / (param_count_model):.2%}")
+
     time.sleep(5)
