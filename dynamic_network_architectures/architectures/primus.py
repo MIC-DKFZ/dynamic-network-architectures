@@ -68,7 +68,6 @@ class Primus(AbstractDynamicNetworkArchitectures):
         rope_kwargs=None,
         init_values=None,
         scale_attn_inner=False,
-        use_grn=False,
     ):
         """
         Architecture as proposed in the Primus paper (https://arxiv.org/pdf/2503.01835)
@@ -110,7 +109,6 @@ class Primus(AbstractDynamicNetworkArchitectures):
             rope_kwargs=rope_kwargs,
             init_values=init_values,
             scale_attn_inner=scale_attn_inner,
-            use_grn=use_grn,
         )
         # self.mask_token =
         self.mask_token: torch.Tensor
@@ -333,7 +331,6 @@ class PrimusV3(Primus):
         depth_per_level: tuple[int, ...] = (1, 1, 1),
         ch_per_level: tuple[int, ...] = (32, 64, 256, 1024),
         add_skips: bool = True,
-        use_grn: bool = True,
         nonlin=nn.LeakyReLU,
     ):
         super().__init__(
@@ -358,7 +355,6 @@ class PrimusV3(Primus):
             rope_kwargs=rope_kwargs,
             init_values=init_values,
             scale_attn_inner=scale_attn_inner,
-            use_grn=use_grn,
         )
         self.keys_to_in_proj = (
             "down_projection.stem.blocks.0.conv1.conv",
@@ -423,7 +419,6 @@ class PrimusV3X(PrimusV3):
         rope_kwargs=None,
         init_values=0.1,
         scale_attn_inner=True,
-        use_grn=True,
     ):
         conf = _PRIMUS_CONFIGS[config_name]
         super().__init__(
@@ -440,7 +435,6 @@ class PrimusV3X(PrimusV3):
             rope_kwargs=rope_kwargs,
             init_values=init_values,
             scale_attn_inner=scale_attn_inner,
-            use_grn=use_grn,
         )
 
 
@@ -726,7 +720,6 @@ class PrimusV3S(PrimusV3X):
         rope_kwargs=None,
         init_values=0.1,
         scale_attn_inner=True,
-        use_grn=True,
     ):
         super().__init__(
             input_channels,
@@ -740,7 +733,6 @@ class PrimusV3S(PrimusV3X):
             rope_kwargs,
             init_values,
             scale_attn_inner,
-            use_grn,
         )
 
 
@@ -758,7 +750,6 @@ class PrimusV3B(PrimusV3X):
         rope_kwargs=None,
         init_values=0.1,
         scale_attn_inner=True,
-        use_grn=True,
     ):
         super().__init__(
             input_channels,
@@ -772,7 +763,6 @@ class PrimusV3B(PrimusV3X):
             rope_kwargs,
             init_values,
             scale_attn_inner,
-            use_grn,
         )
 
 
@@ -790,7 +780,6 @@ class PrimusV3M(PrimusV3X):
         rope_kwargs=None,
         init_values=0.1,
         scale_attn_inner=True,
-        use_grn=True,
     ):
         super().__init__(
             input_channels,
@@ -804,7 +793,6 @@ class PrimusV3M(PrimusV3X):
             rope_kwargs,
             init_values,
             scale_attn_inner,
-            use_grn,
         )
 
 
@@ -822,7 +810,6 @@ class PrimusV3L(PrimusV3X):
         rope_kwargs=None,
         init_values=0.1,
         scale_attn_inner=True,
-        use_grn=True,
     ):
         super().__init__(
             input_channels,
@@ -836,7 +823,6 @@ class PrimusV3L(PrimusV3X):
             rope_kwargs,
             init_values,
             scale_attn_inner,
-            use_grn,
         )
 
 

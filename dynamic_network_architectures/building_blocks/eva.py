@@ -9,12 +9,10 @@ from timm.layers import (
     apply_keep_indices_nlc,
     RotaryEmbeddingCat,
 )
-
+from timm.models.eva import EvaBlock
 from torch import nn
 from torch.nn import LayerNorm
 from torch.utils.checkpoint import checkpoint
-
-from dynamic_network_architectures.building_blocks.eva_block import EvaBlockGRN
 
 
 class Eva(nn.Module):
@@ -52,8 +50,7 @@ class Eva(nn.Module):
         num_reg_tokens: int = 0,
         rope_impl=RotaryEmbeddingCat,
         rope_kwargs=None,
-        block_fn=EvaBlockGRN,
-        use_grn: bool = False,  # whether to use global response normalization in the MLP
+        block_fn=EvaBlock,
     ):
         """
         Diff to timm implementation
@@ -126,7 +123,6 @@ class Eva(nn.Module):
                     norm_layer=norm_layer,
                     init_values=init_values,
                     num_prefix_tokens=self.num_prefix_tokens,
-                    use_grn=use_grn,
                 )
                 for i in range(depth)
             ]
