@@ -257,6 +257,11 @@ class BottleneckD(nn.Module):
         return output_size_conv1 + output_size_conv2 + output_size_conv3 + output_size_skip
 
 
+ResidualBlockType = Union[Type[BasicBlockD], Type[BottleneckD]]
+# a single block class used for all stages, or one entry per stage
+PerStageResidualBlockType = Union[ResidualBlockType, List[ResidualBlockType], Tuple[ResidualBlockType, ...]]
+
+
 class StackedResidualBlocks(nn.Module):
     def __init__(self,
                  n_blocks: int,
@@ -272,7 +277,7 @@ class StackedResidualBlocks(nn.Module):
                  dropout_op_kwargs: dict = None,
                  nonlin: Union[None, Type[torch.nn.Module]] = None,
                  nonlin_kwargs: dict = None,
-                 block: Union[Type[BasicBlockD], Type[BottleneckD]] = BasicBlockD,
+                 block: ResidualBlockType = BasicBlockD,
                  bottleneck_channels: Union[int, List[int], Tuple[int, ...]] = None,
                  stochastic_depth_p: float = 0.0,
                  squeeze_excitation: bool = False,
@@ -313,6 +318,9 @@ class StackedResidualBlocks(nn.Module):
             output_channels = [output_channels] * n_blocks
         if not isinstance(bottleneck_channels, (tuple, list)):
             bottleneck_channels = [bottleneck_channels] * n_blocks
+        if block is BottleneckD:
+            assert all(b is not None for b in bottleneck_channels), \
+                'bottleneck_channels must be provided (not None) when using BottleneckD'
 
         if block == BasicBlockD:
             blocks = nn.Sequential(

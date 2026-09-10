@@ -14,6 +14,17 @@ class InitWeights_He(object):
                 nn.init.constant_(module.bias, 0)
 
 
+class InitWeights_TruncNormal(object):
+    def __init__(self, std: float = 0.02):
+        self.std = std
+
+    def __call__(self, module):
+        if isinstance(module, (nn.Conv2d, nn.Conv3d, nn.ConvTranspose2d, nn.ConvTranspose3d)):
+            nn.init.trunc_normal_(module.weight, std=self.std)
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0)
+
+
 class InitWeights_XavierUniform(object):
     def __init__(self, gain: int = 1):
         self.gain = gain

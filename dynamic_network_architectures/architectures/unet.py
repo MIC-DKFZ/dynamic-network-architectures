@@ -7,7 +7,7 @@ from dynamic_network_architectures.architectures.abstract_arch import (
 )
 from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim
 from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
-from dynamic_network_architectures.building_blocks.residual import BasicBlockD, BottleneckD
+from dynamic_network_architectures.building_blocks.residual import BasicBlockD, PerStageResidualBlockType
 from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
 from dynamic_network_architectures.building_blocks.unet_decoder import UNetDecoder
 from dynamic_network_architectures.building_blocks.unet_residual_decoder import UNetResDecoder
@@ -128,7 +128,7 @@ class ResidualEncoderUNet(AbstractDynamicNetworkArchitectures):
         nonlin: Union[None, Type[torch.nn.Module]] = None,
         nonlin_kwargs: dict = None,
         deep_supervision: bool = False,
-        block: Union[Type[BasicBlockD], Type[BottleneckD]] = BasicBlockD,
+        block: PerStageResidualBlockType = BasicBlockD,
         bottleneck_channels: Union[int, List[int], Tuple[int, ...]] = None,
         stem_channels: int = None,
     ):
@@ -216,7 +216,7 @@ class ResidualUNet(nn.Module):
         nonlin: Union[None, Type[torch.nn.Module]] = None,
         nonlin_kwargs: dict = None,
         deep_supervision: bool = False,
-        block: Union[Type[BasicBlockD], Type[BottleneckD]] = BasicBlockD,
+        block: PerStageResidualBlockType = BasicBlockD,
         bottleneck_channels: Union[int, List[int], Tuple[int, ...]] = None,
         stem_channels: int = None,
     ):

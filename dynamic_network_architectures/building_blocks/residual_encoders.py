@@ -5,7 +5,8 @@ from typing import Union, Type, List, Tuple
 
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
-from dynamic_network_architectures.building_blocks.residual import StackedResidualBlocks, BottleneckD, BasicBlockD
+from dynamic_network_architectures.building_blocks.residual import StackedResidualBlocks, BottleneckD, BasicBlockD, \
+    PerStageResidualBlockType
 from dynamic_network_architectures.building_blocks.helper import maybe_convert_scalar_to_list, get_matching_pool_op
 from dynamic_network_architectures.building_blocks.simple_conv_blocks import StackedConvBlocks
 
@@ -26,7 +27,7 @@ class ResidualEncoder(nn.Module):
                  dropout_op_kwargs: dict = None,
                  nonlin: Union[None, Type[torch.nn.Module]] = None,
                  nonlin_kwargs: dict = None,
-                 block: Union[Type[BasicBlockD], Type[BottleneckD]] = BasicBlockD,
+                 block: PerStageResidualBlockType = BasicBlockD,
                  bottleneck_channels: Union[int, List[int], Tuple[int, ...]] = None,
                  return_skips: bool = False,
                  disable_default_stem: bool = False,
@@ -53,8 +54,11 @@ class ResidualEncoder(nn.Module):
         :param dropout_op_kwargs:
         :param nonlin:
         :param nonlin_kwargs:
-        :param block:
-        :param bottleneck_channels: only needed if block is BottleneckD
+        :param block: residual block class to use. Can be a single class (used in all stages) or a list/tuple with
+        one entry per stage, allowing for example BasicBlockD in the first (high resolution) stages and BottleneckD
+        in the deeper stages
+        :param bottleneck_channels: only needed for stages whose block is BottleneckD. Entries for BasicBlockD
+        stages are ignored (can be None)
         :param return_skips: set this to True if used as encoder in a U-Net like network
         :param disable_default_stem: If True then no stem will be created. You need to build your own and ensure it is executed first, see todo.
         The stem in this implementation does not so stride/pooling so building your own stem is a necessity if you need this.
@@ -72,8 +76,12 @@ class ResidualEncoder(nn.Module):
             strides = [strides] * n_stages
         if bottleneck_channels is None or isinstance(bottleneck_channels, int):
             bottleneck_channels = [bottleneck_channels] * n_stages
+        if not isinstance(block, (tuple, list)):
+            block = [block] * n_stages
         assert len(
             bottleneck_channels) == n_stages, "bottleneck_channels must be None or have as many entries as we have resolution stages (n_stages)"
+        assert len(
+            block) == n_stages, "block must be a single block class or have as many entries as we have resolution stages (n_stages)"
         assert len(
             kernel_sizes) == n_stages, "kernel_sizes must have as many entries as we have resolution stages (n_stages)"
         assert len(
@@ -105,7 +113,7 @@ class ResidualEncoder(nn.Module):
             stage = StackedResidualBlocks(
                 n_blocks_per_stage[s], conv_op, input_channels, features_per_stage[s], kernel_sizes[s], stride_for_conv,
                 conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs,
-                block=block, bottleneck_channels=bottleneck_channels[s], stochastic_depth_p=stochastic_depth_p,
+                block=block[s], bottleneck_channels=bottleneck_channels[s], stochastic_depth_p=stochastic_depth_p,
                 squeeze_excitation=squeeze_excitation,
                 squeeze_excitation_reduction_ratio=squeeze_excitation_reduction_ratio
             )
@@ -131,6 +139,8 @@ class ResidualEncoder(nn.Module):
         self.dropout_op_kwargs = dropout_op_kwargs
         self.conv_bias = conv_bias
         self.kernel_sizes = kernel_sizes
+        self.block = block
+        self.bottleneck_channels = bottleneck_channels
 
     def forward(self, x):
         if self.stem is not None:
