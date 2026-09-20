@@ -152,3 +152,46 @@ class UNetDecoder(nn.Module):
             if self.deep_supervision or (s == (len(self.stages) - 1)):
                 output += np.prod([self.num_classes, *skip_sizes[-(s+1)]], dtype=np.int64)
         return output
+
+    @staticmethod
+    def _conv_macs_from_module(conv_module: nn.Module, output_size: Union[List[int], Tuple[int, ...]]) -> int:
+        kernel_size = conv_module.kernel_size
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size,)
+        groups = getattr(conv_module, 'groups', 1)
+        return int(
+            np.prod(output_size, dtype=np.int64)
+            * conv_module.out_channels
+            * (conv_module.in_channels // groups)
+            * np.prod(kernel_size, dtype=np.int64)
+        )
+
+    def compute_approx_flops(self, input_size: Union[List[int], Tuple[int, ...]]) -> int:
+        """
+        Approximate FLOPs (multiply+add counted as 2 FLOPs) for one forward pass.
+
+        IMPORTANT: input_size is the encoder input spatial size.
+        """
+        skip_sizes = []
+        for s in range(len(self.encoder.strides) - 1):
+            skip_sizes.append([i // j for i, j in zip(input_size, self.encoder.strides[s])])
+            input_size = skip_sizes[-1]
+
+        macs = 0
+        for s in range(len(self.stages)):
+            target_size = skip_sizes[-(s + 1)]
+
+            # transpose conv
+            macs += self._conv_macs_from_module(self.transpconvs[s], target_size)
+
+            # convs in StackedConvBlocks
+            if hasattr(self.stages[s], 'convs'):
+                for conv_block in self.stages[s].convs:
+                    if hasattr(conv_block, 'conv'):
+                        macs += self._conv_macs_from_module(conv_block.conv, target_size)
+
+            # segmentation head(s)
+            if self.deep_supervision or (s == (len(self.stages) - 1)):
+                macs += self._conv_macs_from_module(self.seg_layers[s], target_size)
+
+        return int(2 * macs)

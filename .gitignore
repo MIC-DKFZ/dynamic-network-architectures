@@ -111,3 +111,6 @@ ENV/
 *.model
 
 cifar_lightning/mlruns*
+
+#mac users
+.DS_Store
